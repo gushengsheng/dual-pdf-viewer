@@ -52,6 +52,85 @@ function download(filename, text, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
+const stripExt = (name) => String(name || 'document').replace(/\.[^.]+$/, '')
+
+/** Original Markdown/TXT with each note inserted after the line it quotes. */
+function mergeTextSource(text, notes) {
+  const lines = String(text || '').split(/\r?\n/)
+  const norm = (s) => String(s).replace(/\s+/g, ' ')
+
+  // A selection can span several lines, so try a few progressively shorter
+  // probes and take the first line that matches.
+  const findLine = (noteText) => {
+    const flat = norm(noteText).trim()
+    const candidates = []
+    if (flat) candidates.push(flat.slice(0, 20), flat.slice(0, 12))
+    const firstToken = String(noteText || '').trim().split(/\s+/)[0] || ''
+    if (firstToken.length >= 4) candidates.push(firstToken)
+    for (const probe of candidates) {
+      if (!probe) continue
+      for (let i = 0; i < lines.length; i++) {
+        if (norm(lines[i]).includes(probe)) return i
+      }
+    }
+    return -1
+  }
+
+  const inserts = new Map()
+  const leftovers = []
+  for (const n of notes) {
+    const hit = findLine(n.text || '')
+    if (hit >= 0) inserts.set(hit, [...(inserts.get(hit) || []), n])
+    else leftovers.push(n)
+  }
+
+  const out = []
+  lines.forEach((line, i) => {
+    out.push(line)
+    const list = inserts.get(i)
+    if (list) {
+      out.push('')
+      for (const n of list) out.push(`> **笔记**：${(n.body || '（空）').trim()}`, '')
+    }
+  })
+  if (leftovers.length) {
+    out.push('', '## 未定位到原文的笔记', '')
+    leftovers.forEach((n, i) => {
+      out.push(`### ${i + 1}. ${(n.text || '（框选区域）').slice(0, 60)}`, '', n.body || '', '')
+    })
+  }
+  return out.join('\n')
+}
+
+/** PDF: page text (extracted) followed by that page's notes. */
+async function mergePdfSource(pane, notes) {
+  const doc = pane?.doc
+  if (!doc) return ''
+  const byPage = new Map()
+  for (const n of notes) {
+    const p = Math.max(1, Math.min(n.page || 1, doc.numPages))
+    byPage.set(p, [...(byPage.get(p) || []), n])
+  }
+  const out = []
+  for (const page of [...byPage.keys()].sort((a, b) => a - b)) {
+    out.push(`## 第 ${page} 页`, '')
+    try {
+      const proxy = await doc.getPage(page)
+      const content = await proxy.getTextContent()
+      const text = content.items
+        .map((it) => it.str || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (text) out.push(text, '')
+    } catch {
+      /* page text unavailable */
+    }
+    for (const n of byPage.get(page)) out.push(`> **笔记**：${(n.body || '（空）').trim()}`, '')
+  }
+  return out.join('\n')
+}
+
 export class NotesPanel {
   constructor(root) {
     this.root = root
@@ -303,6 +382,7 @@ export class NotesPanel {
 
   exportTo(kind) {
     if (!this.items.length) return null
+    if (kind === 'full') return this.exportFull()
     const json = kind === 'json'
     const text = json ? this.exportJson() : this.exportMarkdown()
     const base =
@@ -317,6 +397,34 @@ export class NotesPanel {
       json ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8',
     )
     return this.lastExport
+  }
+
+  /** Source text + every note, merged in reading order. */
+  async exportFull() {
+    const pane = this.pane
+    if (!pane) return null
+    const source = this.sourceName()
+    const when = new Date().toLocaleString('zh-CN', { hour12: false })
+    const body =
+      pane.kind === 'text'
+        ? mergeTextSource(pane.lastText || '', this.items)
+        : await mergePdfSource(pane, this.items)
+
+    const md = [
+      `# ${source}（原文 + 笔记）`,
+      '',
+      `导出时间：${when}`,
+      `笔记条数：${this.items.length}`,
+      '',
+      '---',
+      '',
+      body,
+    ].join('\n')
+    const base = stripExt(source).replace(/[\\/:*?"<>|\s]+/g, '_') || 'notes'
+    const filename = `${base}-原文+笔记.md`
+    this.lastFullExport = { filename, text: md }
+    download(filename, md, 'text/markdown;charset=utf-8')
+    return this.lastFullExport
   }
 
   addNote(anchor) {

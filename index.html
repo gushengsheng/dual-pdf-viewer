@@ -70,7 +70,6 @@
             <span class="zoom-label">–</span>
             <button class="btn" data-act="zoom-in" title="放大 (+)">+</button>
             <button class="btn" data-act="fit" title="适应宽度 (0)">适宽</button>
-            <button class="btn" data-act="export-text" title="把这份 Markdown / TXT 原文另存出来" hidden>导出全文</button>
             <button class="btn" data-act="open" title="打开 PDF / Markdown（点开可输入路径）">打开</button>
             <input type="file" accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" hidden />
           </div>
@@ -108,7 +107,6 @@
             <span class="zoom-label">–</span>
             <button class="btn" data-act="zoom-in" title="放大 (+)">+</button>
             <button class="btn" data-act="fit" title="适应宽度 (0)">适宽</button>
-            <button class="btn" data-act="export-text" title="把这份 Markdown / TXT 原文另存出来" hidden>导出全文</button>
             <button class="btn" data-act="open" title="打开 PDF / Markdown（点开可输入路径）">打开</button>
             <input type="file" accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" hidden />
           </div>
@@ -140,6 +138,7 @@
               <div class="export-menu" id="notes-export-menu" hidden>
                 <button class="export-item" type="button" data-export="md">Markdown（.md）</button>
                 <button class="export-item" type="button" data-export="json">JSON（.json）</button>
+                <button class="export-item" type="button" data-export="full">原文 + 笔记（.md）</button>
               </div>
             </div>
             <button class="btn" id="notes-exit" type="button">退出笔记</button>

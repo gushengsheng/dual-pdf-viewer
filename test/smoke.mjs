@@ -1051,7 +1051,6 @@ try {
       format: p.textFormat,
       paragraphs: doc ? doc.querySelectorAll('p').length : 0,
       text: doc ? doc.innerText : '',
-      exportHidden: p.root.querySelector('[data-act="export-text"]').hidden,
     }
   })
   check(
@@ -1061,16 +1060,6 @@ try {
       txtState.paragraphs >= 3 &&
       txtState.text.includes('A 组 421 例'),
     JSON.stringify({ ...txtState, text: txtState.text.slice(0, 30) }),
-  )
-  check('TXT 显示「导出全文」按钮', txtState.exportHidden === false, String(txtState.exportHidden))
-
-  await page.click('[data-side="right"] [data-act="export-text"]')
-  await sleep(400)
-  const txtExport = await page.evaluate(() => window.__dpv.panes.right.lastTextExport)
-  check(
-    '导出全文内容与原文一致',
-    txtExport.filename.endsWith('.txt') && txtExport.text.includes('切缘阳性'),
-    JSON.stringify({ file: txtExport.filename, len: txtExport.text.length }),
   )
 
   await page.mouse.move(mdBox.x, mdBox.y)
@@ -1106,10 +1095,29 @@ try {
     txtNote.cards === 1 && /TXT/.test(txtNote.meta) && txtNote.bubbles === 1,
     JSON.stringify(txtNote),
   )
+
+  await page.click('#notes-export')
+  await sleep(250)
+  const hasFullItem = await page.evaluate(
+    () => !!document.querySelector('#notes-export-menu [data-export="full"]'),
+  )
+  await page.click('#notes-export-menu [data-export="full"]')
+  await sleep(900)
+  const fullExport = await page.evaluate(() => window.__dpv.notes.lastFullExport)
+  check(
+    '笔记面板导出「原文 + 笔记」',
+    hasFullItem &&
+      !!fullExport &&
+      fullExport.filename.endsWith('-原文+笔记.md') &&
+      fullExport.text.includes('会议记录') &&
+      fullExport.text.includes('> **笔记**'),
+    JSON.stringify({ menu: hasFullItem, file: fullExport?.filename, len: fullExport?.text?.length }),
+  )
+
   await page.click('#notes-exit')
   await sleep(450)
 
-  // PDF left + TXT right for the final screenshot (TXT shows 「导出全文」)
+  // PDF left + TXT right for the final screenshot
   await leftInput.uploadFile(path.join(fixtures, 'paper-a.pdf'))
   await sleep(1400)
 
@@ -1171,9 +1179,10 @@ try {
       }
     })
     await page.reload({ waitUntil: 'networkidle0' })
-    await sleep(600)
+    await page.waitForSelector('[data-side="right"] input[type=file]', { timeout: 15000 })
+    await sleep(500)
 
-    const [ri2] = await page.$$('[data-side="right"] input[type=file]')
+    const ri2 = await page.$('[data-side="right"] input[type=file]')
     await ri2.uploadFile(path.join(fixtures, 'plain-notes.txt'))
     await sleep(900)
     await page.mouse.move(700, 400)
