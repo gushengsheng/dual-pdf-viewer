@@ -142,7 +142,8 @@ export class NotesPanel {
     ]
     this.items.forEach((n, i) => {
       const quote = (n.text || '（框选区域）').replace(/\s+/g, ' ').trim()
-      const where = n.kind === 'text' ? 'Markdown' : `第 ${n.page} 页`
+      const where =
+        n.kind === 'text' ? (n.format === 'txt' ? 'TXT' : 'Markdown') : `第 ${n.page} 页`
       out.push(`## ${i + 1}. ${where}`, '', `> ${quote}`, '')
       const body = (n.body || '').trim()
       if (body) out.push(body, '')
@@ -159,6 +160,7 @@ export class NotesPanel {
         exportedAt: new Date().toISOString(),
         notes: this.items.map((n) => ({
           kind: n.kind === 'text' ? 'text' : 'pdf',
+          format: n.format || null,
           page: n.page,
           xPt: n.xPt,
           yPt: n.yPt,
@@ -197,6 +199,7 @@ export class NotesPanel {
     const item = {
       id: newId(),
       kind: anchor.kind === 'text' ? 'text' : 'pdf',
+      format: anchor.kind === 'text' ? (anchor.format === 'txt' ? 'txt' : 'md') : null,
       page: anchor.page ?? 1,
       xPt: anchor.xPt ?? 0,
       yPt: anchor.yPt ?? 0,
@@ -274,7 +277,8 @@ export class NotesPanel {
 
       const meta = document.createElement('div')
       meta.className = 'note-meta'
-      const where = item.kind === 'text' ? 'Markdown' : `第 ${item.page} 页`
+      const where =
+        item.kind === 'text' ? (item.format === 'txt' ? 'TXT' : 'Markdown') : `第 ${item.page} 页`
       meta.textContent = `${where} · 第 ${index + 1} 条`
 
       const body = document.createElement('textarea')

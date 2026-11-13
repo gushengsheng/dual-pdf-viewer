@@ -1019,7 +1019,76 @@ try {
   await page.click('#notes-exit')
   await sleep(450)
 
-  // PDF left + markdown right for the final screenshot
+  // --- txt ----------------------------------------------------------------
+  await rightInput.uploadFile(path.join(fixtures, 'plain-notes.txt'))
+  await sleep(800)
+  const txtState = await page.evaluate(() => {
+    const p = window.__dpv.panes.right
+    const doc = p.root.querySelector('.md-doc')
+    return {
+      kind: p.kind,
+      format: p.textFormat,
+      paragraphs: doc ? doc.querySelectorAll('p').length : 0,
+      text: doc ? doc.innerText : '',
+      exportHidden: p.root.querySelector('[data-act="export-text"]').hidden,
+    }
+  })
+  check(
+    'TXT 渲染为纯文本段落',
+    txtState.kind === 'text' &&
+      txtState.format === 'txt' &&
+      txtState.paragraphs >= 3 &&
+      txtState.text.includes('A 组 421 例'),
+    JSON.stringify({ ...txtState, text: txtState.text.slice(0, 30) }),
+  )
+  check('TXT 显示「导出全文」按钮', txtState.exportHidden === false, String(txtState.exportHidden))
+
+  await page.click('[data-side="right"] [data-act="export-text"]')
+  await sleep(400)
+  const txtExport = await page.evaluate(() => window.__dpv.panes.right.lastTextExport)
+  check(
+    '导出全文内容与原文一致',
+    txtExport.filename.endsWith('.txt') && txtExport.text.includes('切缘阳性'),
+    JSON.stringify({ file: txtExport.filename, len: txtExport.text.length }),
+  )
+
+  await page.mouse.move(mdBox.x, mdBox.y)
+  await page.click('[data-side="right"] [data-act="notes"]')
+  await sleep(600)
+  await page.evaluate(() => {
+    const doc = document.querySelector('[data-side="right"] .md-doc')
+    const block = [...doc.querySelectorAll('p')].find((el) => el.textContent.includes('A 组 421'))
+    if (!block) return
+    const range = document.createRange()
+    range.selectNodeContents(block)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    const r = range.getBoundingClientRect()
+    document.querySelector('[data-side="right"] .pane-scroll').dispatchEvent(
+      new MouseEvent('mouseup', { bubbles: true, clientX: r.left + 5, clientY: r.top + 5 }),
+    )
+  })
+  await sleep(700)
+  const txtNote = await page.evaluate(() => {
+    const p = window.__dpv.panes.right
+    const cards = document.querySelectorAll('.note-card')
+    const last = cards[cards.length - 1]
+    return {
+      cards: cards.length,
+      meta: last?.querySelector('.note-meta')?.textContent || '',
+      bubbles: p.mdEl.querySelectorAll('.note-bubble').length,
+    }
+  })
+  check(
+    'TXT 也能记笔记并标注 TXT',
+    txtNote.cards === 1 && /TXT/.test(txtNote.meta) && txtNote.bubbles === 1,
+    JSON.stringify(txtNote),
+  )
+  await page.click('#notes-exit')
+  await sleep(450)
+
+  // PDF left + TXT right for the final screenshot (TXT shows 「导出全文」)
   await leftInput.uploadFile(path.join(fixtures, 'paper-a.pdf'))
   await sleep(1400)
 

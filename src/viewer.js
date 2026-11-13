@@ -1,7 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { prefs } from './prefs.js'
-import { renderMarkdown } from './markdown.js'
+import { renderMarkdown, renderPlainText } from './markdown.js'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -215,6 +215,7 @@ export class PdfPane {
       const act = btn.dataset.act
       this.onActivate?.(this)
       if (act === 'open') this.toggleOpenMenu()
+      else if (act === 'export-text') this.exportText()
       else if (act === 'notes') this.onToggleNotes?.(this)
       else if (act === 'zoom-in') this.zoomStep(1)
       else if (act === 'zoom-out') this.zoomStep(-1)
@@ -292,6 +293,30 @@ export class PdfPane {
     this.openPath(value)
   }
 
+  /** Save the opened Markdown / TXT exactly as it was loaded. */
+  exportText() {
+    if (this.kind !== 'text' || this.mdEl.hidden) return null
+    const base = (this.textName || 'document').replace(/\.(md|markdown|txt)$/i, '')
+    const ext = this.textFormat === 'txt' ? 'txt' : 'md'
+    const filename = `${base}.${ext}`
+    const text = this.lastText || ''
+    this.lastTextExport = { filename, text }
+
+    const blob = new Blob([text], {
+      type: ext === 'txt' ? 'text/plain;charset=utf-8' : 'text/markdown;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.rel = 'noopener'
+    document.body.append(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+    return this.lastTextExport
+  }
+
   async openPath(value) {
     if (!this.localMode) {
       this.setOpenHint('路径打开仅在本地版可用：双击「启动 Dual PDF.bat」', true)
@@ -360,7 +385,10 @@ export class PdfPane {
     this.setTool('select')
 
     this.pagesEl.hidden = true
-    this.mdEl.innerHTML = renderMarkdown(this.lastText)
+    const isTxt = /\.txt$/i.test(name)
+    this.textFormat = isTxt ? 'txt' : 'md'
+    this.textName = name
+    this.mdEl.innerHTML = isTxt ? renderPlainText(this.lastText) : renderMarkdown(this.lastText)
     this.mdEl.hidden = false
     this.scale = 1
     this.autoFit = true
@@ -888,6 +916,7 @@ export class PdfPane {
       if (!this.noteMode) return false
       this.onRegionNote?.({
         kind: 'text',
+        format: this.textFormat,
         text: text.slice(0, 1000),
         ratio: this.scrollRatio(),
       })
@@ -1686,7 +1715,9 @@ export class PdfPane {
   }
 
   updateChrome() {
+    const exportBtn = this.root.querySelector('[data-act="export-text"]')
     if (this.kind === 'text' && !this.mdEl.hidden) {
+      if (exportBtn) exportBtn.hidden = false
       this.pageInput.disabled = true
       this.pageInput.value = ''
       this.pageTotalEl.textContent = '—'
@@ -1698,6 +1729,7 @@ export class PdfPane {
       }
       return
     }
+    if (exportBtn) exportBtn.hidden = true
     const hasDoc = !!this.doc
     this.pageInput.disabled = !hasDoc
     this.pageTotalEl.textContent = hasDoc ? `/ ${this.doc.numPages}` : '/ –'

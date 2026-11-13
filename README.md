@@ -57,7 +57,8 @@ npm run preview  # http://127.0.0.1:5179
 | 删笔记 | 卡片右上 ×，或选中条目后按 Delete |
 | 选择工具 | `V`（可在设置里改）：左键正常选中文本 |
 | 框选工具 | `Z`（可在设置里改）：左键拖一个框，框内区域放大成镜面窗口 |
-| 读 Markdown | 拖进任意一栏即可；`+` / `−` / Ctrl+滚轮调字号，`0` 回到 100%；页码栏在文本模式下显示「—」 |
+| 读 Markdown / TXT | 拖进任意一栏即可；`.md` 按 Markdown 渲染，`.txt` 保持原始换行；`+` / `−` / Ctrl+滚轮调字号，`0` 回到 100% |
+| 导出全文 | 文本类文档（.md / .txt）的工具栏会多出「导出全文」，按原文件名另存原文（不是笔记，是整份内容） |
 | 回到原视角 | 点镜面里的「回到原视角」或按 Esc；再按一次工具键（V/Z）或切到另一个工具也会关掉镜面 |
 | 移动视图 | 滚轮 / 中键拖动 / PgUp·PgDn / 方向键 —— 选择、框选两种工具下都可用 |
 | 改快捷键 | 设置 → 工具键，点一下再按新键（只支持字母，Esc 取消；抢对方的键会自动互换） |
@@ -78,20 +79,20 @@ local/start.cjs       本地启动：起服务 + 开无地址栏的 app 窗口
 启动 Dual PDF.bat      双击入口（首次自动 install + build）
 index.html            两栏骨架 + 笔记面板（每个窗格一套工具栏）
 src/viewer.js         PdfPane：加载、虚拟渲染、缩放、页码、文本层、框选、气泡、Markdown 文本模式
-src/markdown.js       marked + DOMPurify 渲染（净化后再插入，防止 .md 里夹带脚本）
+src/markdown.js       marked + DOMPurify 渲染 Markdown；TXT 走转义后的段落渲染
 src/notes.js          笔记面板与存储（卡片渲染、方向键导航、localStorage）
 src/prefs.js          缩放/快捷键设置
 src/main.js           双栏装配、焦点路由、分隔条、拖放、互换、笔记模式
 src/style.css         布局 + pdf.js 文本层样式（从 pdf_viewer.css 抄的必要部分）
 scripts/copy-pdfjs-assets.mjs  postinstall 把 cmaps / standard_fonts 复制进 public/
-test/smoke.mjs        puppeteer 冒烟测试（66 项）
-test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md 测试用
+test/smoke.mjs        puppeteer 冒烟测试（70 项）
+test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md / plain-notes.txt 测试用
 ```
 
 ## 实现要点
 
 - **笔记是分窗格的**：两边各按自己那份文档的指纹存一套，互不干扰。入口在每侧工具栏里，面板自动占另一侧，所以正在看的那份 PDF 不会被盖掉。
-- **Markdown 窗格**：`marked` 转 HTML 后先经 `DOMPurify` 净化再插入，`.md` 里夹带的事件属性/脚本会被剥掉。文本模式没有 pages/offsets，字号和滚动比例单独存（同一个 localStorage key，带 `kind:'text'`），换文档不会和 PDF 的阅读进度打架。
+- **Markdown 窗格**：`marked` 转 HTML 后先经 `DOMPurify` 净化再插入，`.md` 里夹带的事件属性/脚本会被剥掉；`.txt` 不做语法解析，只按空行分段、保留行内换行（内容全部转义）。文本模式没有 pages/offsets，字号和滚动比例单独存（同一个 localStorage key，带 `kind:'text'`），换文档不会和 PDF 的阅读进度打架。
 - **两种取词方式，都是自动成条**：选中文字后松手即建条目（光标已在新条目的正文里，直接打字）；拖过无文字的图/空白，或切到框选工具拉一个框，也会把框内文字抓进引用，抓不到字就记成「（框选区域）」。
 - **笔记锚点**：PDF 侧记的是「第几页 + 页内 PDF 坐标」，不是像素位置，所以缩放、换栏宽、重新渲染都不会漂；气泡挂在 pages 层里，跟着滚动走，缩放后由 `positionNoteBubbles()` 重算。Markdown 侧记的是选中文字本身（用前 24 个字在当前文档里找块定位），字号变了或重排后仍能找到；找不到时退回滚动比例。
 - **笔记存储**：按左侧文档指纹（文件名+大小+时间）存 localStorage，两个 PDF 各记各的；正文输入 300ms 防抖落盘。
