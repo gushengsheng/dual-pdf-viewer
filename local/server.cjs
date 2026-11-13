@@ -29,11 +29,14 @@ const MIME = {
   '.pdf': 'application/pdf',
 }
 
-function startServer(root, { port = 0, host = '127.0.0.1' } = {}) {
+function startServer(root, { port = 0, host = '127.0.0.1', dataDir = '' } = {}) {
   const rootDir = path.resolve(root)
   // Only this page can read the token (same-origin), and /__open refuses
   // anything that is not an absolute-ish existing file with a known extension.
   const token = crypto.randomBytes(16).toString('hex')
+  const notesDir = dataDir ? path.resolve(dataDir) : path.join(rootDir, '..', 'notes')
+  const noteFile = (key) =>
+    path.join(notesDir, `${crypto.createHash('sha1').update(key).digest('hex').slice(0, 16)}.json`)
 
   const server = http.createServer((req, res) => {
     if (req.url === '/__health') {
@@ -89,6 +92,82 @@ function startServer(root, { port = 0, host = '127.0.0.1' } = {}) {
         })
         fs.createReadStream(filePath).pipe(res)
       })
+      return
+    }
+
+    if (req.url.startsWith('/__notes')) {
+      const q = new URL(req.url, 'http://local').searchParams
+      if (q.get('token') !== token) {
+        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }).end('bad token')
+        return
+      }
+      if (req.method === 'GET') {
+        const key = q.get('key') || ''
+        if (!key) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('缺少 key')
+          return
+        }
+        fs.readFile(noteFile(key), 'utf8', (err, data) => {
+          if (err) {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('no notes')
+            return
+          }
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          })
+          res.end(data)
+        })
+        return
+      }
+      if (req.method === 'DELETE') {
+        const key = q.get('key') || ''
+        if (!key) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('缺少 key')
+          return
+        }
+        fs.unlink(noteFile(key), () => {
+          res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
+        })
+        return
+      }
+      if (req.method === 'POST') {
+        let body = ''
+        req.on('data', (chunk) => {
+          body += chunk
+          if (body.length > 4 * 1024 * 1024) req.destroy()
+        })
+        req.on('end', () => {
+          let payload = null
+          try {
+            payload = JSON.parse(body)
+          } catch {
+            /* handled below */
+          }
+          const key = String(payload?.key || '')
+          const items = payload?.items
+          if (!key || !Array.isArray(items)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('bad payload')
+            return
+          }
+          fs.mkdir(notesDir, { recursive: true }, () => {
+            const out = JSON.stringify(
+              { key, items, savedAt: new Date().toISOString() },
+              null,
+              2,
+            )
+            fs.writeFile(noteFile(key), out, (err) => {
+              if (err) {
+                res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' }).end('write failed')
+                return
+              }
+              res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
+            })
+          })
+        })
+        return
+      }
+      res.writeHead(405).end('method not allowed')
       return
     }
 

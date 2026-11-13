@@ -56,11 +56,11 @@ async function main() {
 
   let handle
   try {
-    handle = await startServer(DIST, { port: PREFERRED_PORT })
+    handle = await startServer(DIST, { port: PREFERRED_PORT, dataDir: path.join(ROOT, 'notes') })
   } catch (err) {
     if (err && err.code === 'EADDRINUSE') {
       // 端口被别的程序占了，换一个还能用，但 localStorage 会按新端口分开。
-      handle = await startServer(DIST, { port: 0 })
+      handle = await startServer(DIST, { port: 0, dataDir: path.join(ROOT, 'notes') })
       console.log(`端口 ${PREFERRED_PORT} 被占用，改用 ${handle.port}（笔记/设置会另存一份）`)
     } else {
       throw err

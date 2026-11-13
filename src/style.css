@@ -811,6 +811,19 @@ body {
   color: var(--muted);
 }
 
+.notes-status {
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-status.error {
+  color: #c0392b;
+}
+
 .notes-list {
   flex: 1 1 auto;
   min-height: 0;

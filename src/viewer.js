@@ -347,10 +347,10 @@ export class PdfPane {
       if (this.openPathInput) this.openPathInput.value = ''
 
       if (/\.(md|markdown|txt)$/i.test(name)) {
-        this.loadText(await blob.text(), { name, fp: `${name}:${blob.size}:path` })
+        this.loadText(await blob.text(), { name, fp: `${name}:${blob.size}` })
       } else {
         const bytes = new Uint8Array(await blob.arrayBuffer())
-        this.loadBytes(bytes, { name, fp: `${name}:${bytes.byteLength}:path` })
+        this.loadBytes(bytes, { name, fp: `${name}:${bytes.byteLength}` })
       }
     } catch (err) {
       this.setOpenHint(err?.message || '打开失败', true)
@@ -359,16 +359,16 @@ export class PdfPane {
 
   async openFile(file) {
     const name = file.name || ''
+    // Stable key: same file opened by picker or by path must hit the same notes.
+    const fp = `${name}:${file.size}`
     if (/\.(md|markdown|txt)$/i.test(name)) {
       const text = await file.text()
-      const fp = `${name}:${file.size}:${file.lastModified}`
       this.loadText(text, { name, fp })
       return
     }
     const buf = await file.arrayBuffer()
     const bytes = new Uint8Array(buf)
-    const fp = `${file.name}:${file.size}:${file.lastModified}`
-    await this.loadBytes(bytes, { name: file.name, fp })
+    await this.loadBytes(bytes, { name, fp })
   }
 
   /** Markdown / plain text mode: no PDF document, just a rendered article. */

@@ -25,6 +25,7 @@ npm run dev      # http://127.0.0.1:5178
 - 窗口是 Chrome/Edge 的 `--app` 模式（没有地址栏、独立任务栏图标），数据存在项目下的 `.profile/`，和日常浏览器互不干扰。
 - 服务跑在固定端口 **5180**，所以笔记和设置（localStorage 按 origin 存取）每次都在同一份。
 - **可以按路径打开文件**：点「打开」把完整路径粘进去回车，或 `Ctrl+L`；支持绝对路径、`~` 和相对项目根的路径。
+- **笔记自动落盘**：本地版把每份文档的笔记存成 `notes/<hash>.json`（可备份、可拷走），localStorage 只当缓存；关窗口或切到后台时会立刻 flush 一次。
 - 关掉那个黑色控制台窗口 = 停止本地服务；应用窗口关了再开，会复用已在跑的服务。
 - 命令行等价：`npm run local`（构建后启动）；只起服务不开窗：`npm run local:serve`。
 
@@ -55,6 +56,7 @@ npm run preview  # http://127.0.0.1:5179
 | 导出笔记 | 面板右上「导出」→ Markdown（按页列引用+正文）或 JSON（含页码/坐标/时间，方便写脚本） |
 | 找笔记 | 点条目、或面板聚焦时 ↑↓ / ←→ 切换，左侧自动滚回对应句子并闪一下 |
 | 删笔记 | 卡片右上 ×，或选中条目后按 Delete |
+| 保存 | 不用点保存：改完即存。切后台/关窗口时还会立刻落盘一次；本地版另存一份 JSON 到 `notes/` |
 | 选择工具 | `V`（可在设置里改）：左键正常选中文本 |
 | 框选工具 | `Z`（可在设置里改）：左键拖一个框，框内区域放大成镜面窗口 |
 | 读 Markdown / TXT | 拖进任意一栏即可；`.md` 按 Markdown 渲染，`.txt` 保持原始换行；`+` / `−` / Ctrl+滚轮调字号，`0` 回到 100% |
@@ -85,7 +87,7 @@ src/prefs.js          缩放/快捷键设置
 src/main.js           双栏装配、焦点路由、分隔条、拖放、互换、笔记模式
 src/style.css         布局 + pdf.js 文本层样式（从 pdf_viewer.css 抄的必要部分）
 scripts/copy-pdfjs-assets.mjs  postinstall 把 cmaps / standard_fonts 复制进 public/
-test/smoke.mjs        puppeteer 冒烟测试（70 项）
+test/smoke.mjs        puppeteer 冒烟测试（72 项）
 test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md / plain-notes.txt 测试用
 ```
 
@@ -95,7 +97,7 @@ test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md / plain-notes.
 - **Markdown 窗格**：`marked` 转 HTML 后先经 `DOMPurify` 净化再插入，`.md` 里夹带的事件属性/脚本会被剥掉；`.txt` 不做语法解析，只按空行分段、保留行内换行（内容全部转义）。文本模式没有 pages/offsets，字号和滚动比例单独存（同一个 localStorage key，带 `kind:'text'`），换文档不会和 PDF 的阅读进度打架。
 - **两种取词方式，都是自动成条**：选中文字后松手即建条目（光标已在新条目的正文里，直接打字）；拖过无文字的图/空白，或切到框选工具拉一个框，也会把框内文字抓进引用，抓不到字就记成「（框选区域）」。
 - **笔记锚点**：PDF 侧记的是「第几页 + 页内 PDF 坐标」，不是像素位置，所以缩放、换栏宽、重新渲染都不会漂；气泡挂在 pages 层里，跟着滚动走，缩放后由 `positionNoteBubbles()` 重算。Markdown 侧记的是选中文字本身（用前 24 个字在当前文档里找块定位），字号变了或重排后仍能找到；找不到时退回滚动比例。
-- **笔记存储**：按左侧文档指纹（文件名+大小+时间）存 localStorage，两个 PDF 各记各的；正文输入 300ms 防抖落盘。
+- **笔记存储**：按「文件名 + 大小」做 key，边打边存 localStorage；本地版同时写 `notes/` 里的 JSON（文件名是 key 的 sha1 前 16 位），页面隐藏/关闭时用 `sendBeacon` 补一次，避免防抖窗口丢字。旧 key（带 lastModified）会自动迁移。
 - **框选放大（镜面）**：框选后按选区的宽高比算出一个窗口，最大占窗格的 80%（不铺满），对同一页用 `viewport(scale=放大倍率)` + `transform` 平移裁剪重渲染，所以是高清而不是拉图片。主视图一像素都不动，「回到原视角」只是关掉这层浮层。
 - **丝滑缩放**：Ctrl+滚轮（触控板捏合同理）不直接重排，而是每帧对 `.pages` 做 `transform: scale()`，缩放比例按设置的时间常数指数逼近目标值；手势停下才 destroy + 重排 + 重渲染一次。变换以 0,0 为原点，每帧按「页序号 + 页内比例」反算 `scrollTop/scrollLeft`，所以锚点（默认视口中心，可切鼠标位置）在整段动画和最终重排后都钉在同一处。滚轮一格 = 设置的步进值（默认 11%），触控板给的是细粒度 delta，天然连续。
 - **虚拟渲染**：按滚动位置只渲染可见页 ±2，其余销毁（并调 `page.cleanup()` 释放解析缓存），长文档不吃内存。

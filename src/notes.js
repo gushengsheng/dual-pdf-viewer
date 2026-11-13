@@ -1,17 +1,22 @@
-// Notes panel: stacked note cards tied to sentences in the left PDF.
-// Storage key is the left document's fingerprint, so two different PDFs keep
-// separate note sets.
+// Notes panel: stacked note cards tied to sentences in the active pane.
+// Notes are written to localStorage on every change and, in the local app,
+// mirrored to a JSON file under notes/ so they survive closing the window.
 
 const STORE = 'dpv:notes:'
 const newId = () => `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+const isLocal = () => !!window.__DUAL_PDF_LOCAL__
 
-function load(fp) {
+function readKey(key) {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORE + fp) || 'null')
+    const raw = JSON.parse(localStorage.getItem(key) || 'null')
     return Array.isArray(raw?.items) ? raw.items : []
   } catch {
     return []
   }
+}
+
+function load(fp) {
+  return readKey(STORE + fp)
 }
 
 function save(fp, items) {
@@ -20,6 +25,18 @@ function save(fp, items) {
   } catch {
     /* storage full / disabled */
   }
+}
+
+/** Old keys used `name:size:lastModified`; match them by file name. */
+function loadLegacy(fp) {
+  const name = String(fp).split(':')[0]
+  if (!name) return []
+  for (const key of Object.keys(localStorage)) {
+    if (!key.startsWith(`${STORE}${name}:`)) continue
+    const items = readKey(key)
+    if (items.length) return items
+  }
+  return []
 }
 
 function download(filename, text, mime) {
@@ -47,6 +64,17 @@ export class NotesPanel {
     this.selectedId = null
     this.inputTimer = 0
     this.lastExport = null
+    this.statusEl = root.querySelector('.notes-status')
+    this.token = ''
+    this.loadToken = 0
+    this.diskTimer = 0
+
+    const flushOnHide = () => this.flush()
+    window.addEventListener('pagehide', flushOnHide)
+    window.addEventListener('beforeunload', flushOnHide)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushOnHide()
+    })
 
     this.exportBtn = root.querySelector('#notes-export')
     this.exportMenu = root.querySelector('#notes-export-menu')
@@ -84,14 +112,30 @@ export class NotesPanel {
     if (this.pane && this.pane !== pane) this.pane.setNotes([])
     this.pane = pane || null
     this.fp = pane?.fp || ''
-    this.items = this.fp ? load(this.fp) : []
     this.selectedId = null
+    this.loadToken = (this.loadToken || 0) + 1
+    const token = this.loadToken
+    const key = this.fp
     if (this.sourceEl) this.sourceEl.textContent = pane?.nameEl?.textContent || ''
+    this.items = []
     this.render()
-    this.pane?.setNotes(this.items)
+    this.pane?.setNotes([])
+    this.setStatus('')
+    if (!key) return
+    // Warm the token up front so flush-on-close can use sendBeacon.
+    if (isLocal()) this.ensureToken().catch(() => {})
+
+    this.loadFor(key).then((items) => {
+      if (token !== this.loadToken || this.fp !== key) return
+      this.items = items
+      this.render()
+      this.pane?.setNotes(items)
+      this.setStatus(items.length ? '已保存' : '')
+    })
   }
 
   end() {
+    this.flush()
     this.pane?.setNotes([])
     this.pane = null
     this.fp = ''
@@ -103,16 +147,97 @@ export class NotesPanel {
   /** Reload after the bound pane opened a different document. */
   reload() {
     if (!this.pane) return
-    this.fp = this.pane.fp || ''
-    this.items = this.fp ? load(this.fp) : []
-    this.selectedId = null
-    if (this.sourceEl) this.sourceEl.textContent = this.pane.nameEl.textContent
-    this.render()
-    this.pane.setNotes(this.items)
+    this.begin(this.pane)
+  }
+
+  /** localStorage first, then legacy key, then the on-disk copy (local app). */
+  async loadFor(key) {
+    const cached = load(key)
+    if (cached.length) {
+      this.pushDisk()
+      return cached
+    }
+    const legacy = loadLegacy(key)
+    if (legacy.length) {
+      save(key, legacy)
+      this.pushDisk()
+      return legacy
+    }
+    if (isLocal()) {
+      try {
+        const token = await this.ensureToken()
+        const r = await fetch(
+          `/__notes?token=${encodeURIComponent(token)}&key=${encodeURIComponent(key)}`,
+          { cache: 'no-store' },
+        )
+        if (r.ok) {
+          const data = await r.json()
+          if (Array.isArray(data.items) && data.items.length) {
+            save(key, data.items)
+            return data.items
+          }
+        }
+      } catch {
+        /* offline or older server */
+      }
+    }
+    return []
+  }
+
+  async ensureToken() {
+    if (this.token) return this.token
+    const r = await fetch('/__token', { cache: 'no-store' })
+    if (!r.ok) throw new Error('no token')
+    this.token = (await r.json()).token
+    return this.token
   }
 
   persist() {
-    if (this.fp) save(this.fp, this.items)
+    if (!this.fp) return
+    save(this.fp, this.items)
+    if (!isLocal()) {
+      this.setStatus('已保存')
+      return
+    }
+    this.setStatus('保存中…')
+    clearTimeout(this.diskTimer)
+    this.diskTimer = setTimeout(() => this.pushDisk(), 350)
+  }
+
+  async pushDisk() {
+    if (!isLocal() || !this.fp) return
+    try {
+      const token = await this.ensureToken()
+      const r = await fetch(`/__notes?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: this.fp, items: this.items }),
+      })
+      this.setStatus(r.ok ? '已保存到文件' : '保存失败', !r.ok)
+    } catch {
+      this.setStatus('保存失败', true)
+    }
+  }
+
+  /** Called on pagehide / tab hidden: no debounce, write everything now. */
+  flush() {
+    if (!this.fp) return
+    save(this.fp, this.items)
+    if (!isLocal() || !this.token) return
+    try {
+      const blob = new Blob([JSON.stringify({ key: this.fp, items: this.items })], {
+        type: 'application/json',
+      })
+      navigator.sendBeacon(`/__notes?token=${encodeURIComponent(this.token)}`, blob)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  setStatus(text, isError = false) {
+    if (!this.statusEl) return
+    this.statusEl.textContent = text || ''
+    this.statusEl.classList.toggle('error', !!isError)
   }
 
   /* ---------------------------------------------------------------- */

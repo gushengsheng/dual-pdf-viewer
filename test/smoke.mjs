@@ -7,7 +7,7 @@
  *
  * Requires a running dev server (npm run dev) at DPV_URL or :5178.
  */
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer-core'
@@ -55,6 +55,27 @@ try {
   page.on('pageerror', (e) => consoleErrors.push({ text: `pageerror: ${e.message}`, url: '' }))
 
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 })
+
+  // Fixture notes persist on disk between runs; start each run from a clean
+  // slate for the four fixture documents only.
+  const fixtureKeys = ['paper-a.pdf', 'paper-b.pdf', 'notes-sample.md', 'plain-notes.txt'].map(
+    (name) => `${name}:${statSync(path.join(fixtures, name)).size}`,
+  )
+  const localMode = await page.evaluate(() => !!window.__DUAL_PDF_LOCAL__)
+  if (localMode) {
+    await page.evaluate(async (keys) => {
+      const { token } = await (await fetch('/__token', { cache: 'no-store' })).json()
+      for (const key of keys) {
+        await fetch(`/__notes?token=${encodeURIComponent(token)}&key=${encodeURIComponent(key)}`, {
+          method: 'DELETE',
+        })
+        localStorage.removeItem(`dpv:notes:${key}`)
+      }
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('dpv:notes:')) localStorage.removeItem(k)
+      }
+    }, fixtureKeys)
+  }
 
   const state = () =>
     page.evaluate(() => {
@@ -1098,7 +1119,9 @@ try {
 
   // The bad-path test intentionally produces one 404 for /__open; anything else
   // in the console is a real failure.
-  const unexpectedErrors = consoleErrors.filter((e) => !e.url.includes('/__open'))
+  const unexpectedErrors = consoleErrors.filter(
+    (e) => !e.url.includes('/__open') && !e.url.includes('/__notes'),
+  )
   check(
     '没有控制台报错',
     unexpectedErrors.length === 0,
@@ -1112,6 +1135,63 @@ try {
   const shot = path.join(outDir, 'smoke.png')
   await page.screenshot({ path: shot })
   console.log(`\nscreenshot: ${shot}`)
+
+  // --- notes auto-save on close + restore from disk (local app only) ------
+  if (pathApi) {
+    const notesDir = path.resolve(here, '..', 'notes')
+    const listNotes = () =>
+      existsSync(notesDir) ? readdirSync(notesDir).filter((f) => f.endsWith('.json')) : []
+
+    // The panel was closed by the previous block; reopen it for the TXT pane so
+    // there is a live note body to edit and flush.
+    await page.mouse.move(700, 400)
+    await page.click('[data-side="right"] [data-act="notes"]')
+    await sleep(1000)
+
+    await page.evaluate(() => {
+      const ta = document.querySelector('.note-body')
+      if (ta) {
+        ta.value = '自动保存标记-ABC'
+        ta.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await sleep(1000)
+
+    const files = listNotes()
+    const saved = files.some((f) =>
+      readFileSync(path.join(notesDir, f), 'utf8').includes('自动保存标记-ABC'),
+    )
+    check('关闭前自动保存到磁盘', saved, `files=${files.length}`)
+
+    await page.evaluate(() => {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('dpv:notes:')) localStorage.removeItem(k)
+      }
+    })
+    await page.reload({ waitUntil: 'networkidle0' })
+    await sleep(600)
+
+    const [ri2] = await page.$$('[data-side="right"] input[type=file]')
+    await ri2.uploadFile(path.join(fixtures, 'plain-notes.txt'))
+    await sleep(900)
+    await page.mouse.move(700, 400)
+    await page.click('[data-side="right"] [data-act="notes"]')
+    await sleep(1000)
+    const restored = await page.evaluate(() => ({
+      cards: document.querySelectorAll('.note-card').length,
+      bodies: [...document.querySelectorAll('.note-body')].map((t) => t.value).join('|'),
+      status: document.querySelector('.notes-status')?.textContent || '',
+    }))
+    check(
+      '清掉 localStorage 后重开，笔记从磁盘恢复',
+      restored.cards >= 1 && restored.bodies.includes('自动保存标记-ABC'),
+      JSON.stringify({ cards: restored.cards, status: restored.status }),
+    )
+  } else {
+    console.log('SKIP  磁盘保存（当前不是本地服务，dev 模式只有 localStorage）')
+  }
 
   const failed = results.filter((r) => !r.ok)
   console.log(`\n${results.length - failed.length}/${results.length} passed`)
