@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { prefs } from './prefs.js'
+import { renderMarkdown } from './markdown.js'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -54,6 +55,14 @@ export class PdfPane {
     this.zoomEl = root.querySelector('.zoom-label')
     this.fileInput = root.querySelector('input[type=file]')
     this.viewEl = root.querySelector('.pane-view')
+
+    // text (markdown) mode container, sits next to the PDF pages
+    this.kind = 'pdf'
+    this.lastText = ''
+    this.mdEl = document.createElement('div')
+    this.mdEl.className = 'md-doc'
+    this.mdEl.hidden = true
+    this.scrollEl.insertBefore(this.mdEl, this.emptyEl)
 
     this.doc = null
     this.rawBytes = null
@@ -218,15 +227,65 @@ export class PdfPane {
   }
 
   async openFile(file) {
+    const name = file.name || ''
+    if (/\.(md|markdown|txt)$/i.test(name)) {
+      const text = await file.text()
+      const fp = `${name}:${file.size}:${file.lastModified}`
+      this.loadText(text, { name, fp })
+      return
+    }
     const buf = await file.arrayBuffer()
     const bytes = new Uint8Array(buf)
     const fp = `${file.name}:${file.size}:${file.lastModified}`
     await this.loadBytes(bytes, { name: file.name, fp })
   }
 
+  /** Markdown / plain text mode: no PDF document, just a rendered article. */
+  loadText(text, { name = '未命名.md', fp = '' } = {}) {
+    this.gen++
+    this.teardown()
+    this.kind = 'text'
+    this.lastText = String(text ?? '')
+    this.rawBytes = null
+    this.doc = null
+    this.fp = fp || name
+    this.nameEl.textContent = name
+    this.nameEl.title = name
+    this.setTool('select')
+
+    this.pagesEl.hidden = true
+    this.mdEl.innerHTML = renderMarkdown(this.lastText)
+    this.mdEl.hidden = false
+    this.scale = 1
+    this.autoFit = true
+    this.applyTextZoom()
+    this.setEmpty('hidden')
+    this.updateChrome()
+
+    this.scrollEl.scrollTop = 0
+    const saved = readStore(this.fp)
+    if (saved && saved.kind === 'text') {
+      if (Number.isFinite(saved.scale)) {
+        this.scale = clamp(saved.scale, MIN_SCALE, MAX_SCALE)
+        this.applyTextZoom()
+      }
+      if (Number.isFinite(saved.ratio)) {
+        requestAnimationFrame(() => {
+          const max = Math.max(1, this.scrollEl.scrollHeight - this.scrollEl.clientHeight)
+          this.scrollEl.scrollTop = saved.ratio * max
+        })
+      }
+    }
+    this.onDocLoaded?.(this)
+  }
+
   async loadBytes(bytes, { name = '未命名.pdf', fp = '', view = null } = {}) {
     const gen = ++this.gen
     this.teardown()
+    this.kind = 'pdf'
+    this.mdEl.hidden = true
+    this.mdEl.textContent = ''
+    this.pagesEl.hidden = false
     this.rawBytes = bytes
     this.fp = fp || name
     this.nameEl.textContent = name
@@ -274,8 +333,20 @@ export class PdfPane {
   }
 
   snapshot() {
+    if (this.kind === 'text' && !this.mdEl.hidden) {
+      const max = Math.max(1, this.scrollEl.scrollHeight - this.scrollEl.clientHeight)
+      return {
+        kind: 'text',
+        text: this.lastText,
+        name: this.nameEl.textContent,
+        fp: this.fp,
+        scale: this.scale,
+        ratio: this.scrollEl.scrollTop / max,
+      }
+    }
     if (!this.doc || !this.rawBytes) return null
     return {
+      kind: 'pdf',
       bytes: this.rawBytes,
       name: this.nameEl.textContent,
       fp: this.fp,
@@ -288,12 +359,20 @@ export class PdfPane {
       this.clear()
       return
     }
+    if (snap.kind === 'text') {
+      this.loadText(snap.text, { name: snap.name, fp: snap.fp })
+      return
+    }
     this.loadBytes(snap.bytes, { name: snap.name, fp: snap.fp, view: snap.view })
   }
 
   clear() {
     this.gen++
     this.teardown()
+    this.kind = 'pdf'
+    this.mdEl.hidden = true
+    this.mdEl.textContent = ''
+    this.pagesEl.hidden = false
     this.rawBytes = null
     this.fp = ''
     this.nameEl.textContent = '未打开'
@@ -800,13 +879,21 @@ export class PdfPane {
    * gesture the pages are CSS-scaled, so the feedback is immediate.
    */
   onWheelZoom(e) {
-    if (!e.ctrlKey || !this.doc) return
-    e.preventDefault()
+    if (!e.ctrlKey) return
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.scrollEl.clientHeight : 1
     // One wheel notch (deltaY 100) == prefs.step, but keep the curve smooth for
     // trackpad deltas, which arrive in small continuous values.
     const perNotch = Math.log(1 + prefs.step) / 100
     const factor = Math.exp(-e.deltaY * unit * perNotch)
+
+    if (this.kind === 'text') {
+      if (this.mdEl.hidden) return
+      e.preventDefault()
+      this.setTextScale(this.scale * factor)
+      return
+    }
+    if (!this.doc) return
+    e.preventDefault()
     this.autoFit = false
     const anchor =
       prefs.anchor === 'cursor' ? this.makeAnchor(e.clientX, e.clientY) : this.centerAnchor()
@@ -815,10 +902,28 @@ export class PdfPane {
 
   /** One discrete zoom step, used by the +/- keys and buttons. */
   zoomStep(dir) {
+    const mult = dir > 0 ? 1 + prefs.step : 1 / (1 + prefs.step)
+    if (this.kind === 'text') {
+      if (this.mdEl.hidden) return
+      this.setTextScale(this.scale * mult)
+      return
+    }
     if (!this.doc) return
     this.autoFit = false
-    const mult = dir > 0 ? 1 + prefs.step : 1 / (1 + prefs.step)
     this.zoomTo(this.targetOrScale() * mult, this.centerAnchor())
+  }
+
+  /** Text panes zoom by scaling the article font size. */
+  setTextScale(next) {
+    this.scale = clamp(next, 0.6, 3)
+    this.autoFit = false
+    this.applyTextZoom()
+    this.updateChrome()
+    this.scheduleSave()
+  }
+
+  applyTextZoom() {
+    this.mdEl.style.fontSize = `${(15 * this.scale).toFixed(2)}px`
   }
 
   zoomBy(factor) {
@@ -944,6 +1049,15 @@ export class PdfPane {
   }
 
   fitWidth() {
+    if (this.kind === 'text') {
+      if (this.mdEl.hidden) return
+      this.scale = 1
+      this.autoFit = true
+      this.applyTextZoom()
+      this.updateChrome()
+      this.scheduleSave()
+      return
+    }
     if (!this.doc) return
     this.cancelZoom()
     this.autoFit = true
@@ -1002,7 +1116,8 @@ export class PdfPane {
 
   /** Keyboard entry point. Returns true when the key was consumed. */
   handleKey(e) {
-    if (!this.doc) return false
+    const textMode = this.kind === 'text' && !this.mdEl.hidden
+    if (!this.doc && !textMode) return false
     if (e.altKey || e.ctrlKey || e.metaKey) return false
     const step = this.scrollEl.clientHeight * 0.88
     switch (e.key) {
@@ -1286,6 +1401,9 @@ export class PdfPane {
     this.closeLens()
     this.destroyAll()
     this.pagesEl.textContent = ''
+    this.mdEl.hidden = true
+    this.mdEl.textContent = ''
+    this.lastText = ''
     this.notes = []
     this.offsets = []
     this.dims = []
@@ -1326,6 +1444,7 @@ export class PdfPane {
   }
 
   updateCurrentPage() {
+    if (this.kind === 'text') return
     const [first] = this.visibleRange()
     this.currentPage = first
     this.syncPageInput()
@@ -1337,9 +1456,19 @@ export class PdfPane {
   }
 
   scheduleSave() {
-    if (!this.doc || !this.fp) return
+    if (!this.fp) return
     clearTimeout(this.saveTimer)
     this.saveTimer = setTimeout(() => {
+      if (this.kind === 'text') {
+        const max = Math.max(1, this.scrollEl.scrollHeight - this.scrollEl.clientHeight)
+        writeStore(this.fp, {
+          kind: 'text',
+          scale: this.scale,
+          ratio: this.scrollEl.scrollTop / max,
+        })
+        return
+      }
+      if (!this.doc) return
       const a = this.anchor()
       writeStore(this.fp, {
         page: a.page,
@@ -1357,10 +1486,23 @@ export class PdfPane {
   setEmpty(mode, message) {
     this.emptyEl.classList.toggle('hidden', mode === 'hidden')
     this.emptyEl.classList.toggle('is-error', mode === 'error')
-    this.emptyMsg.textContent = message ?? (mode === 'loading' ? '正在打开…' : '拖入 PDF 或点「打开」')
+    this.emptyMsg.textContent =
+      message ?? (mode === 'loading' ? '正在打开…' : '拖入 PDF / Markdown 或点「打开」')
   }
 
   updateChrome() {
+    if (this.kind === 'text' && !this.mdEl.hidden) {
+      this.pageInput.disabled = true
+      this.pageInput.value = ''
+      this.pageTotalEl.textContent = '—'
+      this.zoomEl.textContent = `${Math.round(this.scale * 100)}%`
+      for (const btn of this.root.querySelectorAll(
+        '[data-act="fit"], [data-act="zoom-in"], [data-act="zoom-out"]',
+      )) {
+        btn.disabled = false
+      }
+      return
+    }
     const hasDoc = !!this.doc
     this.pageInput.disabled = !hasDoc
     this.pageTotalEl.textContent = hasDoc ? `/ ${this.doc.numPages}` : '/ –'

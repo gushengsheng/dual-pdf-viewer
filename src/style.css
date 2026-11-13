@@ -395,6 +395,126 @@ body {
   height: 100%;
 }
 
+/* ---------- markdown text pane ---------- */
+
+.md-doc {
+  max-width: 54em;
+  margin: 14px auto 40px;
+  padding: 26px 34px 44px;
+  background: var(--panel);
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.75;
+  overflow-wrap: break-word;
+}
+
+.md-doc > :first-child {
+  margin-top: 0;
+}
+
+.md-doc h1,
+.md-doc h2,
+.md-doc h3,
+.md-doc h4 {
+  margin: 1.3em 0 0.5em;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.md-doc h1 {
+  font-size: 1.7em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--line);
+}
+
+.md-doc h2 {
+  font-size: 1.3em;
+}
+
+.md-doc h3 {
+  font-size: 1.12em;
+}
+
+.md-doc p {
+  margin: 0.7em 0;
+}
+
+.md-doc ul,
+.md-doc ol {
+  margin: 0.7em 0;
+  padding-left: 1.5em;
+}
+
+.md-doc li {
+  margin: 0.25em 0;
+}
+
+.md-doc blockquote {
+  margin: 0.9em 0;
+  padding: 0.2em 1em;
+  border-left: 3px solid var(--accent);
+  background: rgba(47, 111, 237, 0.06);
+  color: var(--muted);
+}
+
+.md-doc blockquote p {
+  margin: 0.4em 0;
+}
+
+.md-doc code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.16);
+  font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
+  font-size: 0.88em;
+}
+
+.md-doc pre {
+  margin: 0.9em 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  overflow: auto;
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.md-doc pre code {
+  padding: 0;
+  background: none;
+}
+
+.md-doc table {
+  display: block;
+  overflow: auto;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+}
+
+.md-doc th,
+.md-doc td {
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+}
+
+.md-doc th {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.md-doc a {
+  color: var(--accent);
+}
+
+.md-doc hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.md-doc img {
+  max-width: 100%;
+}
+
 /* ---------- marquee tool overlay ---------- */
 
 .overlay {

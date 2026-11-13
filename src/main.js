@@ -384,7 +384,8 @@ ro.observe(panes.right.scrollEl)
 /* drag & drop                                                         */
 /* ------------------------------------------------------------------ */
 
-const isPdf = (f) => f && (/\.pdf$/i.test(f.name) || f.type === 'application/pdf')
+const isDoc = (f) =>
+  f && (/\.(pdf|md|markdown|txt)$/i.test(f.name) || f.type === 'application/pdf' || f.type.startsWith('text/'))
 
 function clearDropMarks() {
   panes.left.root.classList.remove('dropping')
@@ -406,7 +407,7 @@ workspace.addEventListener('dragleave', (e) => {
 workspace.addEventListener('drop', async (e) => {
   e.preventDefault()
   clearDropMarks()
-  const files = [...(e.dataTransfer?.files || [])].filter(isPdf)
+  const files = [...(e.dataTransfer?.files || [])].filter(isDoc)
   if (!files.length) return
 
   const target = e.target.closest?.('.pane')

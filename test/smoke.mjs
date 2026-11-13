@@ -838,6 +838,52 @@ try {
   const rw = await page.$eval('[data-side="right"]', (el) => el.getBoundingClientRect().width)
   check('双击分隔条恢复平分', Math.abs(lw - rw) <= 10, `${Math.round(lw)} vs ${Math.round(rw)}`)
 
+  // --- markdown ---------------------------------------------------------
+  await rightInput.uploadFile(path.join(fixtures, 'notes-sample.md'))
+  await sleep(900)
+  const mdState = await page.evaluate(() => {
+    const p = window.__dpv.panes.right
+    const doc = p.root.querySelector('.md-doc')
+    return {
+      kind: p.kind,
+      visible: !!doc && !doc.hidden,
+      h1: doc?.querySelector('h1')?.textContent?.trim() || '',
+      tables: doc ? doc.querySelectorAll('table').length : 0,
+      pageDisabled: p.pageInput.disabled,
+      canvases: p.root.querySelectorAll('.page canvas').length,
+      font: doc ? parseFloat(getComputedStyle(doc).fontSize) : 0,
+    }
+  })
+  check(
+    'Markdown 渲染为文章',
+    mdState.kind === 'text' && mdState.visible && mdState.h1.length > 0 && mdState.tables === 1,
+    JSON.stringify(mdState),
+  )
+  check(
+    'Markdown 模式隐藏 PDF 画布并禁用页码',
+    mdState.canvases === 0 && mdState.pageDisabled === true,
+    JSON.stringify(mdState),
+  )
+
+  const mdBox = await page.$eval('[data-side="right"] .pane-scroll', (el) => {
+    const r = el.getBoundingClientRect()
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  })
+  await page.mouse.move(mdBox.x, mdBox.y)
+  await sleep(150)
+  await page.keyboard.press('Equal')
+  await sleep(450)
+  const mdZoom = await page.evaluate(() => {
+    const p = window.__dpv.panes.right
+    const doc = p.root.querySelector('.md-doc')
+    return { font: parseFloat(getComputedStyle(doc).fontSize), label: p.zoomEl.textContent }
+  })
+  check('Markdown 支持字号缩放', mdZoom.font > mdState.font + 1, `${mdState.font} -> ${mdZoom.font} (${mdZoom.label})`)
+
+  // final screenshot: PDF left, Markdown right
+  await leftInput.uploadFile(path.join(fixtures, 'paper-a.pdf'))
+  await sleep(1400)
+
   // clean final state for the screenshot: both sides fit width
   await page.click('[data-side="right"] [data-act="fit"]')
   await sleep(800)
