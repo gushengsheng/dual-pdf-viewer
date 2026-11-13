@@ -9,7 +9,9 @@
     "dev": "vite --port 5178 --strictPort",
     "build": "vite build",
     "preview": "vite preview --port 5179 --strictPort",
-    "smoke": "node test/smoke.mjs"
+    "smoke": "node test/smoke.mjs",
+    "local": "npm run build && node local/start.cjs",
+    "local:serve": "node local/start.cjs"
   },
   "dependencies": {
     "pdfjs-dist": "^6.5.438"

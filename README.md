@@ -17,6 +17,17 @@ npm install
 npm run dev      # http://127.0.0.1:5178
 ```
 
+## 本地版（双击即用）
+
+双击 **`启动 Dual PDF.bat`**：首次会自动装依赖 + 构建，之后每次双击直接开窗口。
+
+- 窗口是 Chrome/Edge 的 `--app` 模式（没有地址栏、独立任务栏图标），数据存在项目下的 `.profile/`，和日常浏览器互不干扰。
+- 服务跑在固定端口 **5180**，所以笔记和设置（localStorage 按 origin 存取）每次都在同一份。
+- 关掉那个黑色控制台窗口 = 停止本地服务；应用窗口关了再开，会复用已在跑的服务。
+- 命令行等价：`npm run local`（构建后启动）；只起服务不开窗：`npm run local:serve`。
+
+> 说明：没有做成 Electron 打包（这台机器下载 Electron 二进制被网络挡住了）。现在是「零依赖 Node 静态服务 + 浏览器 app 窗口」，离线可用、不需要 dev server。
+
 > `npm install` 的 postinstall 会把 pdf.js 的 `cmaps/` 与 `standard_fonts/` 复制到 `public/pdfjs/`（体积大且可再生成，所以没进仓库）。跳过这步的话中文 PDF 的文本层会缺字。
 ```
 
@@ -56,6 +67,9 @@ npm run preview  # http://127.0.0.1:5179
 ## 结构
 
 ```
+local/server.cjs      零依赖静态服务（带 /__health，用于判断是否已在跑）
+local/start.cjs       本地启动：起服务 + 开无地址栏的 app 窗口
+启动 Dual PDF.bat      双击入口（首次自动 install + build）
 index.html            两栏骨架 + 笔记面板（每个窗格一套工具栏）
 src/viewer.js         PdfPane：加载、虚拟渲染、缩放、页码、文本层、框选、气泡
 src/notes.js          笔记面板与存储（卡片渲染、方向键导航、localStorage）
