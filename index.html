@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>Dual PDF</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <span class="brand">Dual PDF</span>
+        <button class="btn" id="swap" title="左右文档互换">互换左右</button>
+        <button class="btn" id="reset-split" title="恢复左右各一半">平分</button>
+        <button class="btn" id="settings-btn" aria-expanded="false" title="缩放与快捷键设置">设置</button>
+        <span class="hint">悬停哪侧，快捷键就作用于哪侧 · 中键拖动平移 · 双击空白处开文件</span>
+
+        <div class="settings" id="settings" hidden>
+          <div class="settings-row">
+            <span class="settings-label">锚点</span>
+            <div class="seg" id="seg-anchor">
+              <button class="seg-btn" data-value="center">视口中心</button>
+              <button class="seg-btn" data-value="cursor">鼠标位置</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">步进</span>
+            <input type="range" id="set-step" min="3" max="30" step="1" />
+            <span class="settings-value" id="set-step-val">11%</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">动画</span>
+            <input type="range" id="set-smooth" min="30" max="250" step="10" />
+            <span class="settings-value" id="set-smooth-val">70ms</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">工具键</span>
+            <div class="keyrow" id="keyrow">
+              <button class="key-capture" type="button" data-key-cap="select">
+                <span class="cap-label">选择</span><kbd class="cap-key">V</kbd>
+              </button>
+              <button class="key-capture" type="button" data-key-cap="marquee">
+                <span class="cap-label">框选</span><kbd class="cap-key">Z</kbd>
+              </button>
+              <button class="key-capture" type="button" data-key-cap="notesExit">
+                <span class="cap-label">退笔记</span><kbd class="cap-key">Esc</kbd>
+              </button>
+            </div>
+          </div>
+          <div class="settings-note">
+            缩放时保持锚点在原位置。步进 = 滚轮一格 / 按一次 + 的放大比例；快捷键点一下再按新键即可改（字母，退笔记还可以设成 Esc），点别处取消。
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace" id="workspace">
+        <section class="pane" data-side="left" data-tool="select">
+          <div class="pane-bar">
+            <span class="pane-tag">左</span>
+            <span class="file-name">未打开</span>
+            <span class="spacer"></span>
+            <button class="btn tool-btn active" type="button" data-tool-btn="select" title="选择工具：左键选中文本">选择</button>
+            <button class="btn tool-btn" type="button" data-tool-btn="marquee" title="框选工具：拖出一个区域放大">框选</button>
+            <span class="bar-sep"></span>
+            <button class="btn note-btn" type="button" data-act="notes" aria-pressed="false" title="进入这一侧的笔记模式">笔记</button>
+            <span class="bar-sep"></span>
+            <input class="page-input" value="1" inputmode="numeric" title="页码" disabled />
+            <span class="page-total">/ –</span>
+            <button class="btn" data-act="zoom-out" title="缩小 (-)">−</button>
+            <span class="zoom-label">–</span>
+            <button class="btn" data-act="zoom-in" title="放大 (+)">+</button>
+            <button class="btn" data-act="fit" title="适应宽度 (0)">适宽</button>
+            <button class="btn" data-act="open" title="打开 PDF (Ctrl+O)">打开</button>
+            <input type="file" accept=".pdf,application/pdf" hidden />
+          </div>
+          <div class="pane-view">
+            <div class="pane-scroll" tabindex="0">
+              <div class="pages"></div>
+              <div class="empty"><span class="empty-msg">拖入 PDF 或点「打开」</span></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" title="拖动调整分栏"></div>
+
+        <section class="pane" data-side="right" data-tool="select">
+          <div class="pane-bar">
+            <span class="pane-tag">右</span>
+            <span class="file-name">未打开</span>
+            <span class="spacer"></span>
+            <button class="btn tool-btn active" type="button" data-tool-btn="select" title="选择工具：左键选中文本">选择</button>
+            <button class="btn tool-btn" type="button" data-tool-btn="marquee" title="框选工具：拖出一个区域放大">框选</button>
+            <span class="bar-sep"></span>
+            <button class="btn note-btn" type="button" data-act="notes" aria-pressed="false" title="进入这一侧的笔记模式">笔记</button>
+            <span class="bar-sep"></span>
+            <input class="page-input" value="1" inputmode="numeric" title="页码" disabled />
+            <span class="page-total">/ –</span>
+            <button class="btn" data-act="zoom-out" title="缩小 (-)">−</button>
+            <span class="zoom-label">–</span>
+            <button class="btn" data-act="zoom-in" title="放大 (+)">+</button>
+            <button class="btn" data-act="fit" title="适应宽度 (0)">适宽</button>
+            <button class="btn" data-act="open" title="打开 PDF (Ctrl+O)">打开</button>
+            <input type="file" accept=".pdf,application/pdf" hidden />
+          </div>
+          <div class="pane-view">
+            <div class="pane-scroll" tabindex="0">
+              <div class="pages"></div>
+              <div class="empty"><span class="empty-msg">拖入 PDF 或点「打开」</span></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="notes-panel" id="notes-panel" hidden>
+          <div class="notes-head">
+            <span class="notes-title">笔记</span>
+            <span class="notes-source"></span>
+            <span class="notes-count">0 条</span>
+            <span class="spacer"></span>
+            <div class="export-wrap">
+              <button class="btn" id="notes-export" type="button" aria-expanded="false" disabled>导出</button>
+              <div class="export-menu" id="notes-export-menu" hidden>
+                <button class="export-item" type="button" data-export="md">Markdown（.md）</button>
+                <button class="export-item" type="button" data-export="json">JSON（.json）</button>
+              </div>
+            </div>
+            <button class="btn" id="notes-exit" type="button">退出笔记</button>
+          </div>
+          <div class="notes-list" id="notes-list" tabindex="0"></div>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

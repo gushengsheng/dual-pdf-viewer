@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test/out/
+public/pdfjs/
+.chrome-print/
+.chrome-smoke/
+.tmp/
+*.log
