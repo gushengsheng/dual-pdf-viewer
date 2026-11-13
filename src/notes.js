@@ -447,8 +447,16 @@ export class NotesPanel {
     this.pane.setNotes(this.items)
     this.select(item.id, { reveal: false })
     this.listEl.focus({ preventScroll: true })
-    const body = this.cardEl(item.id)?.querySelector('.note-body')
-    body?.focus()
+
+    // Focus after the current mouseup/click finishes: the browser's default
+    // click-to-focus would otherwise steal it back and force an extra click.
+    const focusBody = () => {
+      if (this.selectedId !== item.id) return
+      const body = this.cardEl(item.id)?.querySelector('.note-body')
+      if (body) body.focus({ preventScroll: true })
+    }
+    setTimeout(focusBody, 0)
+    requestAnimationFrame(focusBody)
     return item
   }
 

@@ -1096,6 +1096,43 @@ try {
     JSON.stringify(txtNote),
   )
 
+  // Real browsers move focus to the pane on click; the deferred focus in
+  // addNote must win that race, otherwise the user has to click the card.
+  await page.evaluate(() => {
+    const p = window.__dpv.panes.right
+    const block = [...p.mdEl.querySelectorAll('p')].find((el) => el.textContent.includes('切缘阳性'))
+    if (!block) return
+    const range = document.createRange()
+    range.selectNodeContents(block)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    const r = range.getBoundingClientRect()
+    p.scrollEl.dispatchEvent(
+      new MouseEvent('mouseup', { bubbles: true, clientX: r.left + 5, clientY: r.top + 5 }),
+    )
+    p.scrollEl.focus()
+    p.scrollEl.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  await sleep(400)
+  const focusState = await page.evaluate(() => ({
+    tag: document.activeElement?.tagName || '',
+    cls: document.activeElement?.className || '',
+    cards: document.querySelectorAll('.note-card').length,
+  }))
+  check(
+    '选中后新条目自动获得焦点（不被窗格抢走）',
+    focusState.tag === 'TEXTAREA' && focusState.cards === 2,
+    JSON.stringify(focusState),
+  )
+  await page.keyboard.type('直接输入不用再点')
+  await sleep(500)
+  const typed = await page.evaluate(() => {
+    const items = window.__dpv.notes.items
+    return items[items.length - 1]?.body || ''
+  })
+  check('不用再点一下就能输入', typed.includes('直接输入不用再点'), typed)
+
   await page.click('#notes-export')
   await sleep(250)
   const hasFullItem = await page.evaluate(
