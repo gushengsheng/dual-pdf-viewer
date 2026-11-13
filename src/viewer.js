@@ -64,6 +64,16 @@ export class PdfPane {
     this.mdEl.hidden = true
     this.scrollEl.insertBefore(this.mdEl, this.emptyEl)
 
+    this.openMenu = root.querySelector('.open-menu')
+    this.openPathInput = root.querySelector('.open-path-input')
+    this.openHintEl = root.querySelector('.open-hint')
+    this.localMode = !!window.__DUAL_PDF_LOCAL__
+    if (!this.localMode) {
+      const row = root.querySelector('.open-path')
+      if (row) row.hidden = true
+      if (this.openHintEl) this.openHintEl.textContent = '路径打开仅在本地版可用；这里请用「选择文件」'
+    }
+
     this.doc = null
     this.rawBytes = null
     this.fp = ''
@@ -204,7 +214,7 @@ export class PdfPane {
       if (!btn) return
       const act = btn.dataset.act
       this.onActivate?.(this)
-      if (act === 'open') this.chooseFile()
+      if (act === 'open') this.toggleOpenMenu()
       else if (act === 'notes') this.onToggleNotes?.(this)
       else if (act === 'zoom-in') this.zoomStep(1)
       else if (act === 'zoom-out') this.zoomStep(-1)
@@ -216,6 +226,28 @@ export class PdfPane {
       if (file) this.openFile(file)
       this.fileInput.value = ''
     })
+
+    root.querySelector('[data-open="file"]')?.addEventListener('click', () => {
+      this.toggleOpenMenu(false)
+      this.chooseFile()
+    })
+    root.querySelector('.open-go')?.addEventListener('click', () => this.submitOpenPath())
+    this.openPathInput?.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.submitOpenPath()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        this.toggleOpenMenu(false)
+      }
+    })
+    this.openPathInput?.addEventListener('input', () => this.setOpenHint(''))
+    document.addEventListener('click', (e) => {
+      if (!this.openMenu || this.openMenu.hidden) return
+      if (this.openMenu.contains(e.target) || e.target.closest?.('[data-act="open"]')) return
+      this.toggleOpenMenu(false)
+    })
   }
 
   /* ------------------------------------------------------------------ */
@@ -224,6 +256,80 @@ export class PdfPane {
 
   chooseFile() {
     this.fileInput.click()
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* open by path (local app only: talks to the loopback server)         */
+  /* ------------------------------------------------------------------ */
+
+  toggleOpenMenu(force) {
+    if (!this.openMenu) return
+    const open = force === undefined ? this.openMenu.hidden : !!force
+    this.openMenu.hidden = !open
+    if (open) {
+      this.setOpenHint('')
+      setTimeout(() => this.openPathInput?.focus(), 0)
+    }
+  }
+
+  focusOpenPath() {
+    this.toggleOpenMenu(true)
+  }
+
+  setOpenHint(text, isError = false) {
+    if (!this.openHintEl) return
+    this.openHintEl.textContent = text || ''
+    this.openHintEl.classList.toggle('error', !!isError)
+  }
+
+  submitOpenPath() {
+    const value = (this.openPathInput?.value || '').trim()
+    if (!value) {
+      this.setOpenHint('先粘贴一个文件路径', true)
+      this.openPathInput?.focus()
+      return
+    }
+    this.openPath(value)
+  }
+
+  async openPath(value) {
+    if (!this.localMode) {
+      this.setOpenHint('路径打开仅在本地版可用：双击「启动 Dual PDF.bat」', true)
+      return
+    }
+    this.setOpenHint('读取中…')
+    try {
+      const tokenRes = await fetch('/__token', { cache: 'no-store' })
+      if (!tokenRes.ok) {
+        throw new Error('本地服务没有响应，重启一下「启动 Dual PDF.bat」')
+      }
+      const { token } = await tokenRes.json()
+      const res = await fetch(
+        `/__open?token=${encodeURIComponent(token)}&path=${encodeURIComponent(value)}`,
+        { cache: 'no-store' },
+      )
+      if (!res.ok) {
+        const msg = (await res.text().catch(() => '')).trim()
+        throw new Error(msg || `打开失败（${res.status}）`)
+      }
+
+      const name =
+        decodeURIComponent(res.headers.get('x-file-name') || '') ||
+        value.split(/[\\/]/).pop()
+      const blob = await res.blob()
+
+      this.toggleOpenMenu(false)
+      if (this.openPathInput) this.openPathInput.value = ''
+
+      if (/\.(md|markdown|txt)$/i.test(name)) {
+        this.loadText(await blob.text(), { name, fp: `${name}:${blob.size}:path` })
+      } else {
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        this.loadBytes(bytes, { name, fp: `${name}:${bytes.byteLength}:path` })
+      }
+    } catch (err) {
+      this.setOpenHint(err?.message || '打开失败', true)
+    }
   }
 
   async openFile(file) {

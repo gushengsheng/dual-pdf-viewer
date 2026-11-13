@@ -119,6 +119,76 @@ body {
   margin: 0 2px;
 }
 
+/* ---------- open menu (file picker + path input) ---------- */
+
+.open-menu {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  z-index: 40;
+  width: 330px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+}
+
+.open-menu[hidden] {
+  display: none;
+}
+
+.open-item {
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.open-item:hover {
+  background: var(--btn-hover);
+}
+
+.open-path {
+  display: flex;
+  gap: 6px;
+}
+
+.open-path input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: none;
+}
+
+.open-path input:focus {
+  border-color: var(--accent);
+}
+
+.open-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.open-hint.error {
+  color: #c0392b;
+}
+
 /* ---------- zoom settings popover ---------- */
 
 .settings {

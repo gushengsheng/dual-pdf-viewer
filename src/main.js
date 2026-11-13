@@ -248,6 +248,11 @@ document.addEventListener('keydown', (e) => {
     active.chooseFile()
     return
   }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'l') {
+    e.preventDefault()
+    active.focusOpenPath()
+    return
+  }
   if (e.key === 'Escape') {
     let closed = false
     for (const pane of Object.values(panes)) {

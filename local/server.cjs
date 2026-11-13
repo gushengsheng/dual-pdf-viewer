@@ -3,7 +3,12 @@
 // build serves its own files instead of using file://.
 const http = require('node:http')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
+const crypto = require('node:crypto')
+
+const OPENABLE = /\.(pdf|md|markdown|txt)$/i
+const MAX_FILE = 200 * 1024 * 1024
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -26,11 +31,64 @@ const MIME = {
 
 function startServer(root, { port = 0, host = '127.0.0.1' } = {}) {
   const rootDir = path.resolve(root)
+  // Only this page can read the token (same-origin), and /__open refuses
+  // anything that is not an absolute-ish existing file with a known extension.
+  const token = crypto.randomBytes(16).toString('hex')
 
   const server = http.createServer((req, res) => {
     if (req.url === '/__health') {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end('{"app":"dual-pdf"}')
+      return
+    }
+
+    if (req.url === '/__token') {
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      res.end(JSON.stringify({ token }))
+      return
+    }
+
+    if (req.url.startsWith('/__open')) {
+      const q = new URL(req.url, 'http://local').searchParams
+      if (q.get('token') !== token) {
+        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }).end('bad token')
+        return
+      }
+      const raw = String(q.get('path') || '').trim().replace(/^"(.*)"$/, '$1')
+      if (!raw) {
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('缺少路径')
+        return
+      }
+      const expanded = raw.startsWith('~')
+        ? path.join(os.homedir(), raw.slice(1).replace(/^[\\/]+/, ''))
+        : raw
+      const filePath = path.resolve(expanded)
+      if (!OPENABLE.test(filePath)) {
+        res
+          .writeHead(415, { 'content-type': 'text/plain; charset=utf-8' })
+          .end('只支持 .pdf / .md / .markdown / .txt')
+        return
+      }
+      fs.stat(filePath, (err, stat) => {
+        if (err || !stat.isFile()) {
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('找不到文件')
+          return
+        }
+        if (stat.size > MAX_FILE) {
+          res.writeHead(413, { 'content-type': 'text/plain; charset=utf-8' }).end('文件太大')
+          return
+        }
+        res.writeHead(200, {
+          'content-type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+          'content-length': stat.size,
+          'cache-control': 'no-store',
+          'x-file-name': encodeURIComponent(path.basename(filePath)),
+        })
+        fs.createReadStream(filePath).pipe(res)
+      })
       return
     }
 
@@ -46,6 +104,28 @@ function startServer(root, { port = 0, host = '127.0.0.1' } = {}) {
     const filePath = path.resolve(rootDir, `.${pathname}`)
     if (filePath !== rootDir && !filePath.startsWith(rootDir + path.sep)) {
       res.writeHead(403).end('forbidden')
+      return
+    }
+
+    if (pathname.endsWith('/index.html')) {
+      // Inject a flag so the page knows it runs under the local server: the
+      // path input needs the loopback file API, a plain dev server has none.
+      fs.readFile(filePath, 'utf8', (err, html) => {
+        if (err) {
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' }).end('read error')
+          return
+        }
+        const out = html.includes('</head>')
+          ? html.replace('</head>', '<script>window.__DUAL_PDF_LOCAL__=true</script></head>')
+          : html
+        const buf = Buffer.from(out, 'utf8')
+        res.writeHead(200, {
+          'content-type': MIME['.html'],
+          'content-length': buf.length,
+          'cache-control': 'no-store',
+        })
+        res.end(buf)
+      })
       return
     }
 

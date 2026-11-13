@@ -48,9 +48,11 @@ try {
 
   const consoleErrors = []
   page.on('console', (m) => {
-    if (m.type() === 'error') consoleErrors.push(m.text())
+    if (m.type() !== 'error') return
+    const loc = m.location?.() || {}
+    consoleErrors.push({ text: m.text(), url: loc.url || '' })
   })
-  page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`))
+  page.on('pageerror', (e) => consoleErrors.push({ text: `pageerror: ${e.message}`, url: '' }))
 
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 })
 
@@ -838,6 +840,78 @@ try {
   const rw = await page.$eval('[data-side="right"]', (el) => el.getBoundingClientRect().width)
   check('双击分隔条恢复平分', Math.abs(lw - rw) <= 10, `${Math.round(lw)} vs ${Math.round(rw)}`)
 
+  // --- open by path (only the local server injects the flag) -------------
+  const pathApi = await page.evaluate(() => !!window.__DUAL_PDF_LOCAL__)
+
+  if (pathApi) {
+    await page.mouse.move(paneRect.x + 80, paneRect.y + 80)
+    await sleep(150)
+    await page.keyboard.down('Control')
+    await page.keyboard.press('l')
+    await page.keyboard.up('Control')
+    await sleep(250)
+    const ctrlL = await page.evaluate(() => {
+      const p = window.__dpv.panes.right
+      return !p.openMenu.hidden && document.activeElement === p.openPathInput
+    })
+    check('Ctrl+L 聚焦路径输入', ctrlL === true, String(ctrlL))
+    await page.keyboard.press('Escape')
+    await sleep(150)
+
+    await page.click('[data-side="right"] [data-act="open"]')
+    await sleep(250)
+    const menuOpen = await page.evaluate(() => {
+      const m = document.querySelector('[data-side="right"] .open-menu')
+      return !!m && !m.hidden
+    })
+    await page.type('[data-side="right"] .open-path-input', path.join(fixtures, 'paper-b.pdf'))
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => {
+        const p = window.__dpv.panes.right
+        return !!p.doc && p.nameEl.textContent === 'paper-b.pdf'
+      },
+      { timeout: 15000 },
+    )
+    await sleep(600)
+    const pathLoaded = await page.evaluate(() => {
+      const p = window.__dpv.panes.right
+      return {
+        name: p.nameEl.textContent,
+        canvases: p.root.querySelectorAll('.page canvas').length,
+        menuHidden: p.openMenu.hidden,
+      }
+    })
+    check(
+      '输入路径打开 PDF',
+      menuOpen && pathLoaded.name === 'paper-b.pdf' && pathLoaded.canvases > 0 && pathLoaded.menuHidden,
+      JSON.stringify(pathLoaded),
+    )
+
+    await page.click('[data-side="right"] [data-act="open"]')
+    await sleep(200)
+    await page.type('[data-side="right"] .open-path-input', path.join(fixtures, 'nope.pdf'))
+    await page.keyboard.press('Enter')
+    await sleep(800)
+    const badPath = await page.evaluate(() => {
+      const p = window.__dpv.panes.right
+      return {
+        hint: p.openHintEl.textContent,
+        name: p.nameEl.textContent,
+        error: p.openHintEl.classList.contains('error'),
+      }
+    })
+    check(
+      '错误路径有提示且不破坏当前文档',
+      badPath.error && badPath.hint.length > 0 && badPath.name === 'paper-b.pdf',
+      JSON.stringify(badPath),
+    )
+    await page.keyboard.press('Escape')
+    await sleep(150)
+  } else {
+    console.log('SKIP  输入路径打开（当前不是本地服务，dev 模式属正常）')
+  }
+
   // --- markdown ---------------------------------------------------------
   await rightInput.uploadFile(path.join(fixtures, 'notes-sample.md'))
   await sleep(900)
@@ -888,7 +962,17 @@ try {
   await page.click('[data-side="right"] [data-act="fit"]')
   await sleep(800)
 
-  check('没有控制台报错', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
+  // The bad-path test intentionally produces one 404 for /__open; anything else
+  // in the console is a real failure.
+  const unexpectedErrors = consoleErrors.filter((e) => !e.url.includes('/__open'))
+  check(
+    '没有控制台报错',
+    unexpectedErrors.length === 0,
+    unexpectedErrors
+      .slice(0, 3)
+      .map((e) => e.text)
+      .join(' | '),
+  )
 
   mkdirSync(outDir, { recursive: true })
   const shot = path.join(outDir, 'smoke.png')

@@ -70,8 +70,16 @@
             <span class="zoom-label">–</span>
             <button class="btn" data-act="zoom-in" title="放大 (+)">+</button>
             <button class="btn" data-act="fit" title="适应宽度 (0)">适宽</button>
-            <button class="btn" data-act="open" title="打开 PDF / Markdown (Ctrl+O)">打开</button>
+            <button class="btn" data-act="open" title="打开 PDF / Markdown（点开可输入路径）">打开</button>
             <input type="file" accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" hidden />
+          </div>
+          <div class="open-menu" hidden>
+            <button class="open-item" type="button" data-open="file">选择文件…</button>
+            <div class="open-path">
+              <input class="open-path-input" type="text" placeholder="输入或粘贴完整路径" spellcheck="false" />
+              <button class="btn open-go" type="button">打开</button>
+            </div>
+            <div class="open-hint"></div>
           </div>
           <div class="pane-view">
             <div class="pane-scroll" tabindex="0">
@@ -99,8 +107,16 @@
             <span class="zoom-label">–</span>
             <button class="btn" data-act="zoom-in" title="放大 (+)">+</button>
             <button class="btn" data-act="fit" title="适应宽度 (0)">适宽</button>
-            <button class="btn" data-act="open" title="打开 PDF / Markdown (Ctrl+O)">打开</button>
+            <button class="btn" data-act="open" title="打开 PDF / Markdown（点开可输入路径）">打开</button>
             <input type="file" accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" hidden />
+          </div>
+          <div class="open-menu" hidden>
+            <button class="open-item" type="button" data-open="file">选择文件…</button>
+            <div class="open-path">
+              <input class="open-path-input" type="text" placeholder="输入或粘贴完整路径" spellcheck="false" />
+              <button class="btn open-go" type="button">打开</button>
+            </div>
+            <div class="open-hint"></div>
           </div>
           <div class="pane-view">
             <div class="pane-scroll" tabindex="0">

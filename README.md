@@ -24,8 +24,11 @@ npm run dev      # http://127.0.0.1:5178
 
 - 窗口是 Chrome/Edge 的 `--app` 模式（没有地址栏、独立任务栏图标），数据存在项目下的 `.profile/`，和日常浏览器互不干扰。
 - 服务跑在固定端口 **5180**，所以笔记和设置（localStorage 按 origin 存取）每次都在同一份。
+- **可以按路径打开文件**：点「打开」把完整路径粘进去回车，或 `Ctrl+L`；支持绝对路径、`~` 和相对项目根的路径。
 - 关掉那个黑色控制台窗口 = 停止本地服务；应用窗口关了再开，会复用已在跑的服务。
 - 命令行等价：`npm run local`（构建后启动）；只起服务不开窗：`npm run local:serve`。
+
+> 路径打开的实现：页面本身读不了磁盘，所以本地服务提供了一个回环接口 `/__open`。它要求一次性 token（每次启动随机生成，只有同源的页面能拿到），只放行 `.pdf/.md/.markdown/.txt`、单文件上限 200MB，且必须存在；dev server 没有这个接口，页面会自动隐藏路径输入。
 
 > 说明：没有做成 Electron 打包（这台机器下载 Electron 二进制被网络挡住了）。现在是「零依赖 Node 静态服务 + 浏览器 app 窗口」，离线可用、不需要 dev server。
 
@@ -43,7 +46,8 @@ npm run preview  # http://127.0.0.1:5179
 
 | 操作 | 方式 |
 | --- | --- |
-| 打开 PDF / Markdown | 拖到左半 / 右半，点「打开」，或在页面旁空白处双击（支持 .pdf / .md / .markdown / .txt） |
+| 打开 PDF / Markdown | 拖到左半 / 右半，点「打开」→「选择文件…」，或在页面旁空白处双击（支持 .pdf / .md / .markdown / .txt） |
+| 按路径打开 | 点「打开」→ 直接粘贴完整路径回车，或 `Ctrl+L` 聚焦输入框（**仅本地版**；dev 模式下会提示不可用） |
 | 一次开两份 | 一次拖两个文件到任意一侧：第一个进被拖的那侧，第二个进另一侧 |
 | 笔记模式 | 每侧工具栏里的「笔记」按钮，点哪侧就进哪侧的笔记；面板占另一侧，被记笔记的 PDF 保持可见 |
 | 记一条笔记 | 笔记模式下选中文字就自动成条（光标直接落在正文里）；框选一处（图、表格、空白）同样自动成条 |
@@ -69,7 +73,7 @@ npm run preview  # http://127.0.0.1:5179
 ## 结构
 
 ```
-local/server.cjs      零依赖静态服务（带 /__health，用于判断是否已在跑）
+local/server.cjs      零依赖静态服务（/__health 复用检测、/__token + /__open 按路径读文件）
 local/start.cjs       本地启动：起服务 + 开无地址栏的 app 窗口
 启动 Dual PDF.bat      双击入口（首次自动 install + build）
 index.html            两栏骨架 + 笔记面板（每个窗格一套工具栏）
@@ -80,7 +84,7 @@ src/prefs.js          缩放/快捷键设置
 src/main.js           双栏装配、焦点路由、分隔条、拖放、互换、笔记模式
 src/style.css         布局 + pdf.js 文本层样式（从 pdf_viewer.css 抄的必要部分）
 scripts/copy-pdfjs-assets.mjs  postinstall 把 cmaps / standard_fonts 复制进 public/
-test/smoke.mjs        puppeteer 冒烟测试（59 项）
+test/smoke.mjs        puppeteer 冒烟测试（62 项）
 test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md 测试用
 ```
 
