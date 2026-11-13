@@ -468,6 +468,7 @@ body {
 /* ---------- markdown text pane ---------- */
 
 .md-doc {
+  position: relative;
   max-width: 54em;
   margin: 14px auto 40px;
   padding: 26px 34px 44px;

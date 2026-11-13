@@ -142,7 +142,8 @@ export class NotesPanel {
     ]
     this.items.forEach((n, i) => {
       const quote = (n.text || '（框选区域）').replace(/\s+/g, ' ').trim()
-      out.push(`## ${i + 1}. 第 ${n.page} 页`, '', `> ${quote}`, '')
+      const where = n.kind === 'text' ? 'Markdown' : `第 ${n.page} 页`
+      out.push(`## ${i + 1}. ${where}`, '', `> ${quote}`, '')
       const body = (n.body || '').trim()
       if (body) out.push(body, '')
       out.push('---', '')
@@ -157,6 +158,7 @@ export class NotesPanel {
         source: this.sourceName(),
         exportedAt: new Date().toISOString(),
         notes: this.items.map((n) => ({
+          kind: n.kind === 'text' ? 'text' : 'pdf',
           page: n.page,
           xPt: n.xPt,
           yPt: n.yPt,
@@ -194,9 +196,11 @@ export class NotesPanel {
     if (!this.pane || !anchor) return null
     const item = {
       id: newId(),
-      page: anchor.page,
-      xPt: anchor.xPt,
-      yPt: anchor.yPt,
+      kind: anchor.kind === 'text' ? 'text' : 'pdf',
+      page: anchor.page ?? 1,
+      xPt: anchor.xPt ?? 0,
+      yPt: anchor.yPt ?? 0,
+      ratio: Number.isFinite(anchor.ratio) ? anchor.ratio : null,
       text: String(anchor.text || '').slice(0, 2000),
       body: '',
       ts: Date.now(),
@@ -270,7 +274,8 @@ export class NotesPanel {
 
       const meta = document.createElement('div')
       meta.className = 'note-meta'
-      meta.textContent = `第 ${item.page} 页 · 第 ${index + 1} 条`
+      const where = item.kind === 'text' ? 'Markdown' : `第 ${item.page} 页`
+      meta.textContent = `${where} · 第 ${index + 1} 条`
 
       const body = document.createElement('textarea')
       body.className = 'note-body'
@@ -311,11 +316,10 @@ export class NotesPanel {
     }
     const card = e.target.closest?.('.note-card')
     if (!card) return
-    if (card.dataset.id === this.selectedId) {
-      card.querySelector('.note-body')?.focus()
-    } else {
-      this.select(card.dataset.id)
-    }
+    // Clicking the note body is editing, not navigation; clicking anywhere else
+    // on the card selects it and jumps back to the source sentence.
+    if (e.target.closest?.('.note-body')) return
+    this.select(card.dataset.id)
   }
 
   onInput(e) {

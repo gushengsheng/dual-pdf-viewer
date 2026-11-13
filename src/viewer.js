@@ -159,7 +159,7 @@ export class PdfPane {
     window.addEventListener('mouseup', (e) => {
       if (this.dragOrigin) this.finishDrag(e)
     })
-    this.pagesEl.addEventListener('pointerdown', (e) => this.onNoteBubbleDown(e))
+    this.scrollEl.addEventListener('pointerdown', (e) => this.onNoteBubbleDown(e))
     this.viewEl.addEventListener('dblclick', (e) => this.onDblClick(e))
 
     // The overlay sits above the pages in marquee mode, so wheel/pan have to be
@@ -767,9 +767,14 @@ export class PdfPane {
     this.renderNoteBubbles()
   }
 
+  bubbleHost() {
+    return this.kind === 'text' ? this.mdEl : this.pagesEl
+  }
+
   renderNoteBubbles() {
-    if (!this.pagesEl) return
-    for (const el of this.pagesEl.querySelectorAll('.note-bubble')) el.remove()
+    const host = this.bubbleHost()
+    if (!host) return
+    for (const el of this.scrollEl.querySelectorAll('.note-bubble')) el.remove()
     this.notes.forEach((n, i) => {
       const bubble = document.createElement('button')
       bubble.type = 'button'
@@ -777,13 +782,29 @@ export class PdfPane {
       bubble.dataset.noteId = n.id
       bubble.dataset.idx = String(i)
       bubble.textContent = '✎'
-      bubble.title = `第 ${n.page} 页的笔记`
-      this.pagesEl.append(bubble)
+      bubble.title = n.kind === 'text' ? 'Markdown 笔记' : `第 ${n.page} 页的笔记`
+      host.append(bubble)
     })
     this.positionNoteBubbles()
   }
 
   positionNoteBubbles() {
+    if (this.kind === 'text') {
+      const hostRect = this.mdEl.getBoundingClientRect()
+      for (const el of this.mdEl.querySelectorAll('.note-bubble')) {
+        const n = this.notes[Number(el.dataset.idx)]
+        const block = n ? this.findNoteBlock(n.text) : null
+        if (!n || !block) {
+          el.style.display = 'none'
+          continue
+        }
+        const r = block.getBoundingClientRect()
+        el.style.display = ''
+        el.style.left = '6px'
+        el.style.top = `${Math.max(2, r.top - hostRect.top + 2)}px`
+      }
+      return
+    }
     if (!this.pagesEl || !this.offsets.length) return
     const SIZE = 18
     for (const el of this.pagesEl.querySelectorAll('.note-bubble')) {
@@ -806,6 +827,26 @@ export class PdfPane {
     }
   }
 
+  /** Markdown notes anchor to a text block (first 24 chars are the probe). */
+  findNoteBlock(text) {
+    if (!text || !this.mdEl || this.kind !== 'text') return null
+    const probe = String(text).replace(/\s+/g, ' ').trim().slice(0, 24)
+    if (probe) {
+      for (const el of this.mdEl.querySelectorAll(
+        'p, li, h1, h2, h3, h4, blockquote, td, th, pre, dt, dd',
+      )) {
+        const t = (el.textContent || '').replace(/\s+/g, ' ')
+        if (t.includes(probe)) return el
+      }
+    }
+    return null
+  }
+
+  scrollRatio() {
+    const max = Math.max(1, this.scrollEl.scrollHeight - this.scrollEl.clientHeight)
+    return this.scrollEl.scrollTop / max
+  }
+
   onNoteBubbleDown(e) {
     const bubble = e.target.closest?.('.note-bubble')
     if (!bubble) return
@@ -820,18 +861,17 @@ export class PdfPane {
    * the drag (the region fallback in finishDrag then stays out of the way).
    */
   afterSelection(e) {
-    if (this.tool !== 'select' || !this.doc || !this.noteMode) return false
+    if (this.tool !== 'select') return false
     if (e?.target?.closest?.('.note-bubble')) return false
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount || sel.isCollapsed) return false
     const range = sel.getRangeAt(0)
-    if (!this.pagesEl.contains(range.commonAncestorContainer)) return false
+    const node = range.commonAncestorContainer
+    const inPdf = this.pagesEl.contains(node)
+    const inMd = this.kind === 'text' && this.mdEl.contains(node)
+    if (!inPdf && !inMd) return false
     const text = sel.toString().replace(/\s+/g, ' ').trim()
     if (!text) return false
-    const start = range.startContainer
-    const startEl = start.nodeType === 1 ? start : start.parentElement
-    const pageEl = startEl?.closest?.('.page')
-    if (!pageEl) return false
     const rect = range.getBoundingClientRect()
     if (!rect.width && !rect.height) return false
 
@@ -843,8 +883,26 @@ export class PdfPane {
     if (px < rect.left - pad || px > rect.right + pad || py < rect.top - pad || py > rect.bottom + pad) {
       return false
     }
+
+    if (inMd) {
+      if (!this.noteMode) return false
+      this.onRegionNote?.({
+        kind: 'text',
+        text: text.slice(0, 1000),
+        ratio: this.scrollRatio(),
+      })
+      sel.removeAllRanges()
+      return true
+    }
+
+    if (!this.doc || !this.noteMode) return false
+    const start = range.startContainer
+    const startEl = start.nodeType === 1 ? start : start.parentElement
+    const pageEl = startEl?.closest?.('.page')
+    if (!pageEl) return false
     const pageRect = pageEl.getBoundingClientRect()
     this.onRegionNote?.({
+      kind: 'pdf',
       page: Number(pageEl.dataset.page),
       xPt: clamp((rect.left - pageRect.left) / this.scale, 0, 100000),
       yPt: clamp((rect.top - pageRect.top) / this.scale, 0, 100000),
@@ -857,7 +915,24 @@ export class PdfPane {
   }
 
   revealNote(note) {
-    if (!note || !this.offsets.length) return
+    if (!note) return
+    if (this.kind === 'text') {
+      const block = this.findNoteBlock(note.text)
+      if (block) {
+        const r = block.getBoundingClientRect()
+        const top = r.top - this.scrollEl.getBoundingClientRect().top + this.scrollEl.scrollTop
+        this.scrollEl.scrollTo({
+          top: Math.max(0, top - this.scrollEl.clientHeight * 0.3),
+          behavior: 'smooth',
+        })
+        this.flashBlock(block)
+      } else if (Number.isFinite(note.ratio)) {
+        const max = Math.max(1, this.scrollEl.scrollHeight - this.scrollEl.clientHeight)
+        this.scrollEl.scrollTo({ top: note.ratio * max, behavior: 'smooth' })
+      }
+      return
+    }
+    if (!this.offsets.length) return
     const off = this.offsets[note.page - 1]
     if (!off) return
     const y = off.top + note.yPt * this.scale
@@ -875,11 +950,25 @@ export class PdfPane {
     setTimeout(() => ring.remove(), 1500)
   }
 
+  flashBlock(block) {
+    const hostRect = this.mdEl.getBoundingClientRect()
+    const r = block.getBoundingClientRect()
+    const ring = document.createElement('div')
+    ring.className = 'note-flash'
+    ring.style.left = '4px'
+    ring.style.top = `${r.top - hostRect.top}px`
+    ring.style.width = `${Math.max(20, this.mdEl.clientWidth - 8)}px`
+    ring.style.height = `${Math.max(18, r.height)}px`
+    this.mdEl.append(ring)
+    setTimeout(() => ring.remove(), 1500)
+  }
+
   onDblClick(e) {
     if (e.target.closest?.('.lens, .note-bubble, .textLayer')) return
     const background =
       e.target === this.scrollEl || e.target === this.pagesEl || !!e.target.closest?.('.empty')
-    if (!this.doc || background) this.chooseFile()
+    const empty = !this.doc && this.kind !== 'text'
+    if (empty || (background && this.kind === 'pdf')) this.chooseFile()
   }
 
   /** Notes mode: the pane button toggles it, and box-drags become notes too. */

@@ -954,7 +954,72 @@ try {
   })
   check('Markdown 支持字号缩放', mdZoom.font > mdState.font + 1, `${mdState.font} -> ${mdZoom.font} (${mdZoom.label})`)
 
-  // final screenshot: PDF left, Markdown right
+  // --- notes on markdown --------------------------------------------------
+  await page.mouse.move(mdBox.x, mdBox.y)
+  await page.click('[data-side="right"] [data-act="notes"]')
+  await sleep(650)
+  const mdNotesMode = await page.evaluate(() => ({
+    panel: !document.getElementById('notes-panel').hidden,
+    source: document.querySelector('.notes-source').textContent,
+  }))
+  check(
+    'Markdown 也能进笔记模式',
+    mdNotesMode.panel && mdNotesMode.source.includes('notes-sample'),
+    JSON.stringify(mdNotesMode),
+  )
+
+  const mdSelected = await page.evaluate(() => {
+    const doc = document.querySelector('[data-side="right"] .md-doc')
+    const block = [...doc.querySelectorAll('p, li, h1, h2')].find((el) =>
+      el.textContent.includes('样本量'),
+    )
+    if (!block) return null
+    const range = document.createRange()
+    range.selectNodeContents(block)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    const r = range.getBoundingClientRect()
+    document.querySelector('[data-side="right"] .pane-scroll').dispatchEvent(
+      new MouseEvent('mouseup', {
+        bubbles: true,
+        clientX: r.left + 5,
+        clientY: r.top + 5,
+      }),
+    )
+    return block.textContent.trim().slice(0, 20)
+  })
+  await sleep(700)
+  const mdNoteState = await page.evaluate(() => {
+    const p = window.__dpv.panes.right
+    const cards = document.querySelectorAll('.note-card')
+    const last = cards[cards.length - 1]
+    return {
+      cards: cards.length,
+      quote: last?.querySelector('.note-quote')?.textContent || '',
+      meta: last?.querySelector('.note-meta')?.textContent || '',
+      bubbles: p.mdEl.querySelectorAll('.note-bubble').length,
+    }
+  })
+  check(
+    'Markdown 选中文字自动成条',
+    !!mdSelected && mdNoteState.cards === 1 && mdNoteState.bubbles === 1,
+    JSON.stringify(mdNoteState),
+  )
+  check('Markdown 笔记标注来源', /Markdown/.test(mdNoteState.meta), mdNoteState.meta)
+
+  await page.evaluate(() => document.querySelectorAll('.note-card')[0].click())
+  await sleep(600)
+  const mdReveal = await page.evaluate(() => ({
+    selected: document.querySelector('.note-card.selected') ? 1 : 0,
+    hasFlash: !!document.querySelector('.md-doc .note-flash'),
+  }))
+  check('点 Markdown 笔记能定位原文', mdReveal.selected === 1 && mdReveal.hasFlash, JSON.stringify(mdReveal))
+
+  await page.click('#notes-exit')
+  await sleep(450)
+
+  // PDF left + markdown right for the final screenshot
   await leftInput.uploadFile(path.join(fixtures, 'paper-a.pdf'))
   await sleep(1400)
 

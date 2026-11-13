@@ -50,7 +50,8 @@ let notesSide = 'right'
  * panel takes the *other* slot so the annotated PDF stays visible.
  */
 function enterNotes(pane) {
-  if (!pane || !pane.doc) return
+  const usable = !!pane?.doc || (pane?.kind === 'text' && !pane.mdEl.hidden)
+  if (!usable) return
   setActive(pane)
   notesSide = pane === panes.left ? 'right' : 'left'
   notesMode = true
