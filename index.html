@@ -47,8 +47,32 @@
               </button>
             </div>
           </div>
+          <div class="settings-row">
+            <span class="settings-label">英文</span>
+            <label class="settings-check">
+              <input type="checkbox" id="en-enabled" checked />
+              <span>选中即译 + 笔记助手</span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">密钥</span>
+            <input
+              type="password"
+              id="en-key"
+              class="settings-input"
+              placeholder="sk-… 只写进本机 english.config.json"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn" id="en-save" type="button">保存</button>
+            <button class="btn" id="en-test" type="button">测试</button>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">状态</span>
+            <span class="en-status" id="en-status">未配置</span>
+          </div>
           <div class="settings-note">
-            缩放时保持锚点在原位置。步进 = 滚轮一格 / 按一次 + 的放大比例；快捷键点一下再按新键即可改（字母，退笔记还可以设成 Esc），点别处取消。
+            缩放时保持锚点在原位置。步进 = 滚轮一格 / 按一次 + 的放大比例；快捷键点一下再按新键即可改（字母，退笔记还可以设成 Esc），点别处取消。英文助手：密钥只写进本机 english.config.json，页面拿不到明文；笔记里的英文永远由你写，工具只给候选和挑错。
           </div>
         </div>
       </header>
@@ -63,6 +87,7 @@
             <button class="btn tool-btn" type="button" data-tool-btn="marquee" title="框选工具：拖出一个区域放大">框选</button>
             <span class="bar-sep"></span>
             <button class="btn note-btn" type="button" data-act="notes" aria-pressed="false" title="进入这一侧的笔记模式">笔记</button>
+            <button class="btn edit-btn" type="button" data-act="edit" aria-pressed="false" title="修改这一侧的 Markdown / TXT 源码">修改</button>
             <span class="bar-sep"></span>
             <input class="page-input" value="1" inputmode="numeric" title="页码" disabled />
             <span class="page-total">/ –</span>
@@ -100,6 +125,7 @@
             <button class="btn tool-btn" type="button" data-tool-btn="marquee" title="框选工具：拖出一个区域放大">框选</button>
             <span class="bar-sep"></span>
             <button class="btn note-btn" type="button" data-act="notes" aria-pressed="false" title="进入这一侧的笔记模式">笔记</button>
+            <button class="btn edit-btn" type="button" data-act="edit" aria-pressed="false" title="修改这一侧的 Markdown / TXT 源码">修改</button>
             <span class="bar-sep"></span>
             <input class="page-input" value="1" inputmode="numeric" title="页码" disabled />
             <span class="page-total">/ –</span>
@@ -144,6 +170,22 @@
             <button class="btn" id="notes-exit" type="button">退出笔记</button>
           </div>
           <div class="notes-list" id="notes-list" tabindex="0"></div>
+        </aside>
+
+        <aside class="assist-panel" id="assist-panel" hidden>
+          <div class="assist-head">
+            <span class="assist-title">英文助手</span>
+            <span class="assist-scope" id="assist-scope">未选中</span>
+            <span class="spacer"></span>
+            <button class="btn" id="assist-para-check" type="button" title="只检查光标所在的那一段">查本段</button>
+            <button class="btn" id="assist-save" type="button" title="写回原文件 (Ctrl+S)">保存</button>
+            <button class="btn" id="assist-exit" type="button">退出修改</button>
+          </div>
+          <div class="assist-status" id="assist-status" hidden></div>
+          <div class="assist-body" id="assist-body"></div>
+          <div class="assist-hint" id="assist-hint">
+            选中一句话就会出现按钮；打中文停一下会给英文候选。
+          </div>
         </aside>
       </main>
     </div>

@@ -10,6 +10,8 @@ const DIST = path.join(ROOT, 'dist')
 const PREFERRED_PORT = Number(process.env.DP_PORT) || 5180
 const PROFILE = path.join(ROOT, '.profile')
 const NO_WINDOW = Boolean(process.env.DP_NO_WINDOW)
+// 外部指定要打开的文件（任务中枢用它做“一键恢复现场”）
+const OPEN_PATH = String(process.env.DP_OPEN || '').trim()
 
 const BROWSERS = [
   path.join(process.env['PROGRAMFILES'] || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'),
@@ -19,8 +21,13 @@ const BROWSERS = [
   path.join(process.env['PROGRAMFILES(X86)'] || 'C:/Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe'),
 ]
 
+function withOpen(url) {
+  return OPEN_PATH ? `${url}?open=${encodeURIComponent(OPEN_PATH)}` : url
+}
+
 function openWindow(url) {
   if (NO_WINDOW) return
+  url = withOpen(url)
   const browser = BROWSERS.find((p) => p && fs.existsSync(p))
   if (!browser) {
     console.log('没找到 Chrome / Edge，用默认浏览器打开')

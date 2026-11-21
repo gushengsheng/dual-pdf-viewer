@@ -147,6 +147,8 @@ export class NotesPanel {
     this.token = ''
     this.loadToken = 0
     this.diskTimer = 0
+    /** Set by the English assistant so every card can decorate itself. */
+    this.onCard = null
 
     const flushOnHide = () => this.flush()
     window.addEventListener('pagehide', flushOnHide)
@@ -466,6 +468,32 @@ export class NotesPanel {
     this.listEl.focus({ preventScroll: true })
   }
 
+  /** Replace one note's text, keeping the textarea and storage in sync. */
+  setBody(id, text) {
+    const item = this.items.find((n) => n.id === id)
+    if (!item) return false
+    item.body = String(text ?? '')
+    const body = this.cardEl(id)?.querySelector('.note-body')
+    if (body && body.value !== item.body) body.value = item.body
+    this.persist()
+    return true
+  }
+
+  /**
+   * Park a translation inside the note the writer is looking at. Only the
+   * translation goes in — the note body stays theirs to write.
+   */
+  insertTranslation({ translation }) {
+    if (!this.pane) return false
+    const id = this.selectedId || this.items[this.items.length - 1]?.id
+    const item = this.items.find((n) => n.id === id)
+    if (!item) return false
+    const line = `> ${String(translation || '').trim()}`
+    const next = item.body ? `${item.body.replace(/\s+$/, '')}\n${line}` : line
+    this.setBody(item.id, next)
+    return true
+  }
+
   remove(id) {
     if (!id) return
     this.items = this.items.filter((n) => n.id !== id)
@@ -489,7 +517,7 @@ export class NotesPanel {
     if (!this.items.length) {
       const empty = document.createElement('div')
       empty.className = 'notes-empty'
-      empty.textContent = '在左侧选中一句话，点句子旁边出现的 ＋ 气泡，就在这里生成一条笔记。'
+      empty.textContent = '在左侧选中一句话，就会在这里生成一条笔记。'
       this.listEl.append(empty)
     }
 
@@ -528,8 +556,28 @@ export class NotesPanel {
       body.rows = 2
       body.value = item.body || ''
 
-      card.append(head, meta, body)
+      // English tools live in their own containers so the assistant can redraw
+      // them without touching the card's own markup.
+      const tools = document.createElement('div')
+      tools.className = 'note-tools'
+      const check = document.createElement('button')
+      check.type = 'button'
+      check.className = 'note-check'
+      check.dataset.noteCheck = '1'
+      check.textContent = '检查'
+      const chinese = document.createElement('span')
+      chinese.className = 'note-cn'
+      chinese.dataset.noteCn = '1'
+      chinese.hidden = true
+      tools.append(check, chinese)
+
+      const assist = document.createElement('div')
+      assist.className = 'note-assist'
+      assist.hidden = true
+
+      card.append(head, meta, body, tools, assist)
       this.listEl.append(card)
+      this.onCard?.(card, item)
     })
 
     this.countEl.textContent = `${this.items.length} 条`

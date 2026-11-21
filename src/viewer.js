@@ -38,6 +38,79 @@ function writeStore(key, value) {
 const isAbort = (err) =>
   err && (err.name === 'AbortException' || err.name === 'RenderingCancelledException')
 
+// Properties the mirror has to copy so its wrapping matches the textarea's.
+const MIRROR_PROPS = [
+  'boxSizing',
+  'width',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'borderTopWidth',
+  'borderRightWidth',
+  'borderBottomWidth',
+  'borderLeftWidth',
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'lineHeight',
+  'letterSpacing',
+  'wordSpacing',
+  'textIndent',
+  'textTransform',
+  'tabSize',
+  'whiteSpace',
+  'wordBreak',
+  'overflowWrap',
+]
+
+/**
+ * Where a text position sits on screen, inside a textarea. The browser exposes
+ * no selection geometry for textarea, so the text up to `pos` is laid out again
+ * in an invisible mirror element with identical typography and the marker span
+ * is measured instead.
+ */
+function caretRect(textarea, pos) {
+  const rect = textarea.getBoundingClientRect()
+  if (!rect.width && !rect.height) return null
+  const mirror = document.createElement('div')
+  const style = getComputedStyle(textarea)
+  for (const prop of MIRROR_PROPS) mirror.style[prop] = style[prop]
+  Object.assign(mirror.style, {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    overflow: 'hidden',
+    height: 'auto',
+    maxHeight: 'none',
+    whiteSpace: 'pre-wrap',
+    wordWrap: 'break-word',
+  })
+  mirror.textContent = textarea.value.slice(0, Math.max(0, Math.min(pos, textarea.value.length)))
+  const marker = document.createElement('span')
+  marker.textContent = '\u200b'
+  mirror.append(marker)
+  document.body.append(mirror)
+  const markerRect = marker.getBoundingClientRect()
+  const mirrorRect = mirror.getBoundingClientRect()
+  mirror.remove()
+
+  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5 || 20
+  const left = rect.left + (markerRect.left - mirrorRect.left) - textarea.scrollLeft
+  const top = rect.top + (markerRect.top - mirrorRect.top) - textarea.scrollTop
+  return {
+    left,
+    top,
+    right: left + Math.max(2, markerRect.width),
+    bottom: top + lineHeight,
+    width: Math.max(2, markerRect.width),
+    height: lineHeight,
+  }
+}
+
 /**
  * One completely independent PDF pane: own document, own scroll position,
  * own zoom, own page navigation. Nothing here talks to the other pane.
@@ -63,6 +136,27 @@ export class PdfPane {
     this.mdEl.className = 'md-doc'
     this.mdEl.hidden = true
     this.scrollEl.insertBefore(this.mdEl, this.emptyEl)
+
+    // Edit mode: the very same source text, but as a textarea. A textarea is
+    // used instead of a contenteditable block because offsets into the raw
+    // markdown stay exact, and the browser keeps a native undo stack.
+    this.editorEl = document.createElement('textarea')
+    this.editorEl.className = 'md-editor'
+    this.editorEl.spellcheck = false
+    this.editorEl.wrap = 'soft'
+    this.editorEl.hidden = true
+    this.editorEl.setAttribute('aria-label', 'Markdown 源码编辑器')
+    this.scrollEl.insertBefore(this.editorEl, this.emptyEl)
+
+    this.editMode = false
+    this.filePath = ''
+    this.textName = ''
+    this.textFormat = 'md'
+    this.savedText = ''
+    this.onEditInput = null
+    this.onEditSelection = null
+    this.onSaveRequest = null
+    this.onToggleEdit = null
 
     this.openMenu = root.querySelector('.open-menu')
     this.openPathInput = root.querySelector('.open-path-input')
@@ -126,6 +220,21 @@ export class PdfPane {
 
   bindEvents() {
     const root = this.root
+
+    this.editorEl.addEventListener('input', () => {
+      this.lastText = this.editorEl.value
+      this.updateChrome()
+      this.onEditInput?.(this)
+    })
+    for (const type of ['keyup', 'mouseup', 'select']) {
+      this.editorEl.addEventListener(type, () => this.onEditSelection?.(this))
+    }
+    this.editorEl.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        this.onSaveRequest?.(this)
+      }
+    })
 
     this.scrollEl.addEventListener(
       'scroll',
@@ -216,6 +325,7 @@ export class PdfPane {
       this.onActivate?.(this)
       if (act === 'open') this.toggleOpenMenu()
       else if (act === 'notes') this.onToggleNotes?.(this)
+      else if (act === 'edit') this.onToggleEdit?.(this)
       else if (act === 'zoom-in') this.zoomStep(1)
       else if (act === 'zoom-out') this.zoomStep(-1)
       else if (act === 'fit') this.fitWidth()
@@ -322,7 +432,7 @@ export class PdfPane {
       if (this.openPathInput) this.openPathInput.value = ''
 
       if (/\.(md|markdown|txt)$/i.test(name)) {
-        this.loadText(await blob.text(), { name, fp: `${name}:${blob.size}` })
+        this.loadText(await blob.text(), { name, fp: `${name}:${blob.size}`, path: value })
       } else {
         const bytes = new Uint8Array(await blob.arrayBuffer())
         this.loadBytes(bytes, { name, fp: `${name}:${bytes.byteLength}` })
@@ -347,7 +457,10 @@ export class PdfPane {
   }
 
   /** Markdown / plain text mode: no PDF document, just a rendered article. */
-  loadText(text, { name = '未命名.md', fp = '' } = {}) {
+  loadText(text, { name = '未命名.md', fp = '', path = '' } = {}) {
+    if (this.editMode && this.isDirty()) {
+      if (!window.confirm('这一侧的修改还没保存，打开新文件会丢掉它。继续？')) return
+    }
     this.gen++
     this.teardown()
     this.kind = 'text'
@@ -355,15 +468,16 @@ export class PdfPane {
     this.rawBytes = null
     this.doc = null
     this.fp = fp || name
+    this.filePath = path || ''
     this.nameEl.textContent = name
-    this.nameEl.title = name
+    this.nameEl.title = path || name
     this.setTool('select')
 
     this.pagesEl.hidden = true
     const isTxt = /\.txt$/i.test(name)
     this.textFormat = isTxt ? 'txt' : 'md'
     this.textName = name
-    this.mdEl.innerHTML = isTxt ? renderPlainText(this.lastText) : renderMarkdown(this.lastText)
+    this.renderText()
     this.mdEl.hidden = false
     this.scale = 1
     this.autoFit = true
@@ -386,6 +500,148 @@ export class PdfPane {
       }
     }
     this.onDocLoaded?.(this)
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* edit mode: the markdown/txt source, edited in place                  */
+  /* ------------------------------------------------------------------ */
+
+  /** Which markup dialect this text pane speaks. */
+  renderText() {
+    this.mdEl.innerHTML =
+      this.textFormat === 'txt' ? renderPlainText(this.lastText) : renderMarkdown(this.lastText)
+  }
+
+  canEdit() {
+    return this.kind === 'text' && !!this.textName
+  }
+
+  isDirty() {
+    return this.editMode ? this.editorEl.value !== this.savedText : false
+  }
+
+  /** Enter the source editor. Returns false when this pane holds no text. */
+  enterEdit() {
+    if (!this.canEdit()) return false
+    if (!this.editMode) {
+      this.editMode = true
+      this.savedText = this.lastText
+      this.editorEl.value = this.lastText
+      this.editorEl.hidden = false
+      this.mdEl.hidden = true
+      this.pagesEl.hidden = true
+      this.setEmpty('hidden')
+      this.applyTextZoom()
+      this.updateChrome()
+    }
+    this.editorEl.focus({ preventScroll: true })
+    return true
+  }
+
+  /** Leave the editor: the rendered article picks up whatever was typed. */
+  exitEdit() {
+    if (!this.editMode) return
+    this.lastText = this.editorEl.value
+    this.editMode = false
+    this.editorEl.hidden = true
+    this.mdEl.hidden = false
+    this.renderText()
+    this.setEmpty('hidden')
+    this.updateChrome()
+    this.onDocLoaded?.(this)
+  }
+
+  /** Replace a character range, keeping the textarea's native undo entry. */
+  applyTextRange(start, end, replacement) {
+    const el = this.editorEl
+    const value = el.value
+    const at = clamp(start, 0, value.length)
+    const to = clamp(end, at, value.length)
+    el.focus({ preventScroll: true })
+    el.setSelectionRange(at, to)
+    let inserted = false
+    try {
+      inserted = document.execCommand('insertText', false, replacement)
+    } catch {
+      inserted = false
+    }
+    if (!inserted) {
+      el.setRangeText(replacement, at, to, 'end')
+      // setRangeText fires no event of its own.
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    this.lastText = el.value
+    this.updateChrome()
+    return { start: at, end: at + replacement.length }
+  }
+
+  /** The current selection as a character range, or null when collapsed. */
+  selectionInfo() {
+    const el = this.editorEl
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+    const text = el.value.slice(start, end)
+    if (!text.trim()) return null
+    return { start, end, text }
+  }
+
+  /**
+   * The blank-line delimited paragraph around `pos`. Long documents are only
+   * ever sent to the model one paragraph at a time.
+   */
+  paragraphAt(pos = this.editorEl.selectionStart) {
+    const text = this.editorEl.value
+    const at = clamp(Number.isFinite(pos) ? pos : 0, 0, text.length)
+    let start = 0
+    for (let i = at - 1; i > 0; i--) {
+      if (text[i] === '\n' && text[i - 1] === '\n') {
+        start = i + 1
+        break
+      }
+    }
+    let end = text.length
+    for (let i = at; i < text.length - 1; i++) {
+      if (text[i] === '\n' && text[i + 1] === '\n') {
+        end = i
+        break
+      }
+    }
+    const raw = text.slice(start, end)
+    start += raw.length - raw.trimStart().length
+    end -= raw.length - raw.trimEnd().length
+    return { start, end: Math.max(start, end), text: text.slice(start, Math.max(start, end)) }
+  }
+
+  /** Viewport rect of the current selection, measured with a mirror element. */
+  selectionRect() {
+    const info = this.selectionInfo()
+    if (!info) return null
+    return caretRect(this.editorEl, info.end)
+  }
+
+  /** Write the editor contents back to the file it came from. */
+  async saveText() {
+    if (!this.editMode) return { ok: false, reason: 'not-editing' }
+    const text = this.editorEl.value
+    if (!this.filePath) return { ok: false, reason: 'no-path' }
+    if (!this.localMode) return { ok: false, reason: 'no-local' }
+    const tokenRes = await fetch('/__token', { cache: 'no-store' })
+    if (!tokenRes.ok) throw new Error('本地服务没有响应')
+    const { token } = await tokenRes.json()
+    const res = await fetch(`/__save?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: this.filePath, text }),
+    })
+    if (!res.ok) {
+      const message = (await res.text().catch(() => '')).trim()
+      throw new Error(message || `保存失败（${res.status}）`)
+    }
+    this.savedText = text
+    this.lastText = text
+    this.updateChrome()
+    return { ok: true, bytes: text.length }
   }
 
   async loadBytes(bytes, { name = '未命名.pdf', fp = '', view = null } = {}) {
@@ -449,6 +705,7 @@ export class PdfPane {
         text: this.lastText,
         name: this.nameEl.textContent,
         fp: this.fp,
+        path: this.filePath,
         scale: this.scale,
         ratio: this.scrollEl.scrollTop / max,
       }
@@ -469,7 +726,7 @@ export class PdfPane {
       return
     }
     if (snap.kind === 'text') {
-      this.loadText(snap.text, { name: snap.name, fp: snap.fp })
+      this.loadText(snap.text, { name: snap.name, fp: snap.fp, path: snap.path || '' })
       return
     }
     this.loadBytes(snap.bytes, { name: snap.name, fp: snap.fp, view: snap.view })
@@ -985,6 +1242,17 @@ export class PdfPane {
     btn.title = this.noteMode ? '退出这一侧的笔记模式' : '进入这一侧的笔记模式'
   }
 
+  /** Edit mode mirrors notes mode: one button per pane, toggling in place. */
+  setEditButton(on) {
+    const btn = this.root.querySelector('[data-act="edit"]')
+    if (!btn) return
+    btn.classList.toggle('active', !!on)
+    btn.setAttribute('aria-pressed', String(!!on))
+    btn.title = on ? '退出修改模式' : '修改这一侧的 Markdown / TXT 源码'
+    // Nothing to edit in a PDF pane, so the entry point is simply absent there.
+    btn.disabled = !this.canEdit()
+  }
+
   finishDrag(e) {
     const origin = this.dragOrigin
     this.dragOrigin = null
@@ -1122,7 +1390,9 @@ export class PdfPane {
   }
 
   applyTextZoom() {
-    this.mdEl.style.fontSize = `${(15 * this.scale).toFixed(2)}px`
+    const size = (15 * this.scale).toFixed(2)
+    this.mdEl.style.fontSize = `${size}px`
+    this.editorEl.style.fontSize = `${size}px`
   }
 
   zoomBy(factor) {
@@ -1602,6 +1872,13 @@ export class PdfPane {
     this.pagesEl.textContent = ''
     this.mdEl.hidden = true
     this.mdEl.textContent = ''
+    this.editorEl.hidden = true
+    this.editorEl.value = ''
+    this.editMode = false
+    this.savedText = ''
+    this.filePath = ''
+    this.textName = ''
+    this.root.classList.remove('dirty')
     this.lastText = ''
     this.notes = []
     this.offsets = []
@@ -1690,10 +1967,14 @@ export class PdfPane {
   }
 
   updateChrome() {
-    if (this.kind === 'text' && !this.mdEl.hidden) {
+    const dirty = this.isDirty()
+    this.root.classList.toggle('dirty', dirty)
+    if (dirty) this.nameEl.title = `${this.filePath || this.nameEl.textContent}（有未保存的修改）`
+    else if (this.filePath) this.nameEl.title = this.filePath
+    if (this.kind === 'text' && (this.editMode || !this.mdEl.hidden)) {
       this.pageInput.disabled = true
       this.pageInput.value = ''
-      this.pageTotalEl.textContent = '—'
+      this.pageTotalEl.textContent = this.editMode ? '编辑中' : '—'
       this.zoomEl.textContent = `${Math.round(this.scale * 100)}%`
       for (const btn of this.root.querySelectorAll(
         '[data-act="fit"], [data-act="zoom-in"], [data-act="zoom-out"]',

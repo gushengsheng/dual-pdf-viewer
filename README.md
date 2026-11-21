@@ -8,6 +8,7 @@
 - 缩放是 Edge 那种连续丝滑的：Ctrl+滚轮 / 触控板捏合，光标下的那一行全程不动。
 - 框选放大成镜面、每侧独立的笔记（选句/框选自动成条、气泡定位、Markdown/JSON 导出）。
 - **两侧都能开 Markdown / TXT**：导出的笔记可以直接开到另一栏对照，字号线上一档缩放。
+- **英文助手**：选中即译、笔记检查器、中文→英文候选。英文永远由你写，工具只递候选和挑错（见下）。
 
 ![预览](docs/preview.png)
 
@@ -71,23 +72,122 @@ npm run preview  # http://127.0.0.1:5179
 | 跳页 | 工具栏页码框输入后回车 |
 | 互换左右 | 顶栏「互换左右」 |
 | 分栏 | 拖中间分隔条；双击分隔条或点「平分」恢复 50/50 |
+| 选区翻译 | 选中 PDF 文本层 / Markdown / TXT 里的一句话，浮条上点「中译」或「简释」 |
+| 存进笔记 | 译文卡片上点「存成笔记」，只把译文作为引用行写进当前那条笔记 |
+| 检查笔记 | 笔记卡片上的「检查」：红波浪线=错误，绿波浪线=可优化，逐条「应用」或「全部应用」 |
+| 中文转英文 | 笔记正文里打中文，停手约 0.9 秒，下面给出 natural / concise 两个英文，点一个原位替换 |
+
+## 英文助手（english-only）
+
+三条能力，都是**选项式**：工具不说「我替你改好了」，只把候选摆到你面前，改不改由你。
+
+| 能力 | 触发 | 结果 |
+| --- | --- | --- |
+| 选区翻译 | 在任一窗格选中一句 → 浮条「中译」/「简释」（中文选区多一个「→EN」） | 卡片显示译文 + 1~2 条词义（术语、中文释义、语气说明）；可复制、可「存成笔记」 |
+| 笔记检查器 | 笔记卡「检查」 | 卡内高亮原文（红=错误，绿=可优化）+ 逐条说明 + 单条/全部应用 |
+| 中文转英文 | 笔记输入框里出现中文，停手约 0.9 秒 | 每个中文片段给 natural / concise 两个英文，点哪个换哪个；输入法合成期间不触发 |
+
+**边界（这是设计，不是限制）**：不改写、不批量、不自动应用。没有任何「整条笔记变英文」的入口，笔记正文只能由你敲；`corrected` 只有在你点「全部应用」时才会写回正文。
+
+### 配置
+
+密钥只存在项目根的 `english.config.json`（已进 `.gitignore`），服务端读，页面只拿到尾号：
+
+```json
+{
+  "apiKey": "sk-...",
+  "model": "deepseek-flash",
+  "baseUrl": "https://api.deepseek.com"
+}
+```
+
+- 也可以不写文件，直接用环境变量（优先级更高）：`DPV_LLM_API_KEY` / `DPV_LLM_BASE_URL` / `DPV_LLM_MODEL`。
+- 设置面板里粘贴密钥 → 「保存」就等于写这个文件；「测试」会打一次最小请求。
+- 没配密钥时：浮条与「检查」自动置灰，设置里提示「未配置」，不弹错误。
+- 模型固定 `deepseek-flash`，并显式 `thinking: { type: "disabled" }`。注意该模型声明的 `effort` 只有 low/high/max，`reasoning_effort: "low"` **并不会**真的关掉思考（prompt 仍带思维链脚手架，实测 35 token），关掉它才降到 9 token。
+- 相同请求 10 分钟内命中内存缓存，token 记 0。
+
+### 模拟模式
+
+没有密钥也能把界面点通（UI 测试就靠这个）：
+
+```bash
+DPV_LLM_MOCK=1 npm run local:serve     # Windows PowerShell: $env:DPV_LLM_MOCK='1'; node local/start.cjs
+```
+
+此时 `/__llm/*` 由 `local/english/mock.mjs` 本地应答（带「模拟」角标），不联网、不花钱。mock 是按规则匹配的，不是死字符串：只标它认得的错误、只给词典里的中文片段出选项。
+
+### 接口
+
+和 `/__open`、`/__notes` 一样带 token（每次启动随机，同源页面从 `/__token` 取）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/__llm/health` | 是否配置、模型、密钥尾号、token 用量 |
+| POST | `/__llm/config` | 写 `apiKey` / `baseUrl` / `model` |
+| POST | `/__llm/test` | 一次最小往返 |
+| POST | `/__llm/translate` | `{ text, direction: en-zh \| en-en \| zh-en, context, notes }` |
+| POST | `/__llm/check` | `{ text }` → `{ issues, corrected, summary }` |
+| POST | `/__llm/suggest` | `{ draft, segments }` → 每个片段两条英文 |
+| POST | `/__llm/replace` | `{ text, context }` → 最多 3 版整句重写 |
+| GET / POST | `/__llm/usage`, `/__llm/usage/reset` | 进程内 token 账本 |
+
+`/__save`（修改模式的存盘）也是带 token 的，但它不属于 `/__llm`，判断逻辑在 `local/server.cjs`。
+
+dev server（`npm run dev` / `npm run preview`）由 `vite.config.js` 里的中间件挂同一套路由，不必每次 build；`/english.config.json` 在那里被显式拦成 403，免得密钥从静态服务漏出去。
+
+
+## 修改模式
+
+打开 `.md` / `.markdown` / `.txt` 的窗格，工具栏多一个「修改」。点它，那一侧从渲染阅读态换成**源码编辑器**，右栏换成英文助手。PDF 窗格不出现这个按钮。
+
+这是**第三种模式**，和阅读、笔记并列，不是替换：三者共用同一套槽位，笔记面板与助手栏互斥，但切换时各自的内容和状态都留着。
+
+| 能力 | 触发 | 结果 | 改不改正文 |
+| --- | --- | --- | --- |
+| 中文自动推荐 | 正文里打中文，停手约 0.9 秒 | **只取光标所在段落**，每段中文给 自然 / 简洁 两条英文 | 点一条才原位替换 |
+| 选中翻译 | 选中一句 → 浮条「英→中」/「英→英」 | 译文，或更简单的英文解释 + 词义注释 | 只读 |
+| 检查优化 | 浮条「检查优化」；没选中时面板上点「查本段」 | 既挑错也提优化，逐条 原→改 + 中文说明 | 单条「应用」或「全部应用」 |
+| 替换 | 选中一句 → 浮条「替换」 | 同时给最多 3 版整句重写，每版一句中文说明好在哪 | 点哪版换哪版 |
+
+「检查优化」是细碎多点：给你一堆可改可不改的小地方，未必是你想要的那句；「替换」是整句一把，带前后文一次几版。两个都保留，不互相代替。
+
+关于写回：
+
+- 编辑器改的是**原始 markdown 源码**，所见即所存，存回去还是合法 md。
+- `Ctrl+S` 或面板「保存」写回原文件。**只有按路径打开的文件能存回原处**；用「选择文件…」打开的只能下载一份副本，因为浏览器不把真实路径给页面。
+- 未保存时文件名旁有圆点，关窗口前会拦一次；换文件也会先问。
+- 保存走 `POST /__save`，只认本次进程里经 `/__open` 打开过的路径，先写临时文件再 rename，写一半崩掉也不会毁掉原文件。
+
+**边界**：所有写回都要点一下，没有「整篇自动变英文」的入口；中文推荐只发光标所在段落，语法检查默认同理，长文不会一次性全文送模型。
+
 
 ## 结构
 
 ```
-local/server.cjs      零依赖静态服务（/__health 复用检测、/__token + /__open 按路径读文件）
+local/server.cjs      零依赖静态服务（/__health、/__token、/__open、/__notes、/__llm）
+local/english/        英文助手后端：prompts / pure（归一化）/ config / engine（模型调用）/ routes / mock
 local/start.cjs       本地启动：起服务 + 开无地址栏的 app 窗口
 启动 Dual PDF.bat      双击入口（首次自动 install + build）
-index.html            两栏骨架 + 笔记面板（每个窗格一套工具栏）
+index.html            两栏骨架 + 笔记面板 + 设置里的英文块（每个窗格一套工具栏）
 src/viewer.js         PdfPane：加载、虚拟渲染、缩放、页码、文本层、框选、气泡、Markdown 文本模式
 src/markdown.js       marked + DOMPurify 渲染 Markdown；TXT 走转义后的段落渲染
 src/notes.js          笔记面板与存储（卡片渲染、方向键导航、localStorage）
 src/prefs.js          缩放/快捷键设置
-src/main.js           双栏装配、焦点路由、分隔条、拖放、互换、笔记模式
-src/style.css         布局 + pdf.js 文本层样式（从 pdf_viewer.css 抄的必要部分）
+src/english/api.js    /__llm 客户端、中文分段、英文开关
+src/english/selection.js  选区浮条 + 结果卡（捕获阶段读选区，笔记模式清空前拿到）
+src/english/notes-ui.js   笔记卡上的检查器与中文候选
+src/english/assist.js     修改模式的右栏：中文候选 / 翻译 / 检查 / 替换四类卡片
+src/english/edit-bar.js   编辑器上的浮条（textarea 没有 DOM Range，坐标由镜像层测出来）
+src/main.js           双栏装配、焦点路由、分隔条、拖放、互换、笔记模式、修改模式
+src/style.css         布局 + pdf.js 文本层样式 + 英文浮条/卡片/检查器 + 编辑器与助手栏
 scripts/copy-pdfjs-assets.mjs  postinstall 把 cmaps / standard_fonts 复制进 public/
 test/smoke.mjs        puppeteer 冒烟测试（71 项）
-test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md / plain-notes.txt 测试用
+test/english.mjs      英文纯逻辑测试（归一化、JSON 提取、用量）
+test/english-ui.mjs   puppeteer 界面测试（mock 应答，16 项）
+test/edit-ui.mjs      puppeteer 修改模式测试（21 项：浮条、替换、查本段、中文候选、存盘）
+test/fixtures/        paper-a.pdf / paper-b.pdf / notes-sample.md / plain-notes.txt / editable.md
+english.config.json   密钥与模型（gitignore，不进仓库）
 ```
 
 ## 实现要点
@@ -117,6 +217,25 @@ $env:DPV_URL='http://127.0.0.1:5179/'; node test/smoke.mjs
 
 覆盖：双文档加载、页数独立、canvas 渲染、文本层、滚动互不影响、PageDown 只翻 active 侧、缩放独立、页码跳转、左右互换、分隔条拖动与适宽重算、双击平分、无控制台报错。
 
+英文助手另有两套：
+
+```bash
+npm run test:english                       # 纯逻辑，不用起服务
+$env:DPV_LLM_MOCK='1'; node local/start.cjs   # 另开一个终端，起 mock 服务
+npm run test:english-ui                    # DPV_URL 默认 http://127.0.0.1:5180/
+```
+
+`test:english-ui` 覆盖：浮条出现、结果卡与词义、模拟角标、未开笔记时「存成笔记」置灰、译文落进笔记、中文候选与角标、原位替换、检查器红绿高亮、全部应用、开关关掉后浮条消失、无控制台报错。它自己会清掉 fixture 的旧笔记，可以反复跑。
+
+修改模式（同样对着 5180 的 mock 服务）：
+
+```bash
+$env:DPV_LLM_MOCK='1'; node local/start.cjs   # 另开一个终端
+npm run test:edit-ui
+```
+
+覆盖：编辑器和原始源码一致、浮条四个动作、替换卡多版本、点替换后只动选区、查本段只查一段、中文候选与原位替换、未保存标记、保存真的写回磁盘、退出后渲染态用新正文、笔记模式仍独立、PDF 窗格无修改入口、无控制台报错。它把 fixture 复制到 `test/out/` 再操作，跑完删掉，不会碰仓库里的原文件。
+
 ## 已知限制
 
 - 不能双击 HTML 文件直接打开（ES module + worker 需要 http），必须用 dev / preview 起服务。
@@ -125,3 +244,7 @@ $env:DPV_URL='http://127.0.0.1:5179/'; node test/smoke.mjs
 - 单页超过约 2400 万像素时会自动降采样（canvas 单边上限），超长图纸类 PDF 会略糊。
 - 只做阅读：没有批注、书签、搜索、打印。
 - 进度记忆只认文件指纹，改名或改时间戳会丢。
+- 英文助手要联网、要密钥；额度、限流、模型故障都会直接显示在浮条/检查器里，不会静默失败。
+- 单次上限：检查 6000 字、翻译 3000 字、建议草稿 4000 字（每个请求最多 6 段中文）。超长笔记请分段。
+- PDF 选区的文本由 pdf.js 文本层给出，跨页或带连字符断行时可能夹多余空格；送模型前会压平空白，但极少数断词（如 `re-` 换行）仍可能影响翻译质量。
+- 缓存只在进程内存里，重启本地服务即清空；token 账本同理。

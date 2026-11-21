@@ -2,6 +2,11 @@ import './style.css'
 import { PdfPane } from './viewer.js'
 import { prefs, setPrefs } from './prefs.js'
 import { NotesPanel } from './notes.js'
+import { englishApi, englishSettings } from './english/api.js'
+import { SelectionBar } from './english/selection.js'
+import { NoteAssist } from './english/notes-ui.js'
+import { EditAssist } from './english/assist.js'
+import { EditBar } from './english/edit-bar.js'
 
 const workspace = document.getElementById('workspace')
 const splitter = document.getElementById('splitter')
@@ -25,6 +30,11 @@ const panes = {
 const notesPanelEl = document.getElementById('notes-panel')
 const notesExitBtn = document.getElementById('notes-exit')
 const notes = new NotesPanel(notesPanelEl)
+const noteAssist = new NoteAssist({ notes })
+const selectionBar = new SelectionBar({
+  onSaveToNote: ({ translation }) => notes.insertTranslation({ translation }),
+  canSaveToNote: () => !!notes.pane,
+})
 
 for (const pane of [panes.left, panes.right]) {
   pane.onRegionNote = (anchor) => {
@@ -37,13 +47,35 @@ for (const pane of [panes.left, panes.right]) {
     if (notesMode && notes.pane === p) exitNotes()
     else enterNotes(p)
   }
+  pane.onToggleEdit = (p) => {
+    if (editMode && editPane() === p) exitEdit()
+    else enterEdit(p)
+  }
+  pane.onEditInput = (p) => {
+    if (editMode && editPane() === p) assist.onInput(p)
+  }
+  pane.onEditSelection = (p) => {
+    if (!editMode || editPane() !== p) return
+    const selection = p.selectionInfo()
+    assist.setScope(selection)
+    const rect = selection ? p.selectionRect() : null
+    if (selection && rect) editBar.show(p, selection, rect)
+    else editBar.hide()
+  }
+  pane.onSaveRequest = (p) => {
+    if (editMode && editPane() === p) saveActive()
+  }
   pane.onDocLoaded = () => {
     if (notes.pane === pane) notes.reload()
+    refreshEditButtons()
   }
 }
 
 let notesMode = false
 let notesSide = 'right'
+// Declared here, next to notesMode, because pane callbacks can fire before the
+// edit-mode block below is evaluated.
+let editMode = false
 
 /**
  * Notes are per pane: the button lives in that pane's own toolbar, and the
@@ -86,6 +118,132 @@ function setNotesMode(on) {
 
 notesExitBtn.addEventListener('click', exitNotes)
 
+/* ------------------------------------------------------------------ */
+/* edit mode: editable markdown source + English assistant             */
+/* ------------------------------------------------------------------ */
+
+const assistPanelEl = document.getElementById('assist-panel')
+const assistExitBtn = document.getElementById('assist-exit')
+const assistParaBtn = document.getElementById('assist-para-check')
+const assistSaveBtn = document.getElementById('assist-save')
+
+const assist = new EditAssist({
+  bodyEl: document.getElementById('assist-body'),
+  scopeEl: document.getElementById('assist-scope'),
+  statusEl: document.getElementById('assist-status'),
+  hintEl: document.getElementById('assist-hint'),
+})
+
+const editBar = new EditBar({
+  onAction: (act, { pane, selection }) => {
+    onEditBarAction(act, pane, selection)
+    editBar.hide()
+  },
+})
+
+/** The pane currently being edited, if any. */
+function editPane() {
+  if (!editMode) return null
+  if (panes.left.editMode) return panes.left
+  if (panes.right.editMode) return panes.right
+  return null
+}
+
+function refreshEditButtons() {
+  const owner = editPane()
+  panes.left.setEditButton(panes.left === owner)
+  panes.right.setEditButton(panes.right === owner)
+}
+
+function enterEdit(pane) {
+  if (!editMode && !pane?.canEdit()) return
+  if (notesMode) exitNotes()
+  setActive(pane)
+  editMode = true
+  if (!pane.enterEdit()) {
+    editMode = false
+    return
+  }
+  workspace.classList.add('edit-mode')
+  workspace.dataset.editSide = pane === panes.left ? 'left' : 'right'
+  assistPanelEl.hidden = false
+  assist.attach(pane)
+  refreshEditButtons()
+  pane.handleResize()
+}
+
+function exitEdit() {
+  if (!editMode) return
+  const pane = editPane()
+  editMode = false
+  editBar.hide()
+  assist.detach()
+  workspace.classList.remove('edit-mode')
+  delete workspace.dataset.editSide
+  assistPanelEl.hidden = true
+  if (pane) pane.exitEdit()
+  refreshEditButtons()
+  panes.left.handleResize()
+  panes.right.handleResize()
+}
+
+function onEditBarAction(act, pane, selection) {
+  if (!pane || !selection) return
+  if (act === 'check') assist.runCheck(pane, selection, '检查优化')
+  else if (act === 'replace') assist.runReplace(pane, selection)
+  else if (act === 'en-zh' || act === 'en-en' || act === 'zh-en') {
+    assist.runTranslate(pane, selection, act)
+  }
+}
+
+async function saveActive() {
+  const pane = editPane()
+  if (!pane) return
+  try {
+    const result = await pane.saveText()
+    if (result.ok) {
+      assist.setStatus(`已保存 · ${result.bytes} 字符`)
+      return
+    }
+    if (result.reason === 'no-path' || result.reason === 'no-local') {
+      downloadCopy(pane)
+      assist.setStatus('不是按路径打开的，已下载一份副本', false)
+      return
+    }
+    assist.setStatus('现在没有在编辑', true)
+  } catch (error) {
+    assist.setStatus(error.message || '保存失败', true)
+  }
+}
+
+/** Fallback when there is no file to write back to: hand over a copy. */
+function downloadCopy(pane) {
+  const blob = new Blob([pane.editorEl.value], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = pane.textName || 'document.md'
+  document.body.append(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+assistExitBtn.addEventListener('click', exitEdit)
+assistSaveBtn.addEventListener('click', saveActive)
+assistParaBtn.addEventListener('click', () => {
+  const pane = editPane()
+  if (pane) assist.runCheck(pane, pane.paragraphAt(), '查本段')
+})
+
+// A dirty editor must not disappear with a stray Ctrl+W.
+window.addEventListener('beforeunload', (event) => {
+  if (!panes.left.isDirty() && !panes.right.isDirty()) return
+  event.preventDefault()
+  event.returnValue = ''
+})
+
+
 const SPLIT_KEY = 'dpv:split'
 
 /* ------------------------------------------------------------------ */
@@ -106,6 +264,13 @@ panes.right.onActivate = () => setActive(panes.right)
 panes.left.root.classList.add('active')
 
 // Small hook so the smoke test can inspect state without guessing at the DOM.
+// 允许从外部指定要打开的文件：/?open=<绝对路径>
+// 任务中枢靠这个实现“一键把上次那篇 PDF 摆回来”。
+const openFromQuery = new URLSearchParams(location.search).get('open')
+if (openFromQuery) {
+  panes.left.openPath(openFromQuery).catch(() => {})
+}
+
 window.__dpv = {
   panes,
   getActive: () => active,
@@ -114,6 +279,13 @@ window.__dpv = {
   setPrefs: applyPrefs,
   notes,
   setNotesMode,
+  assist,
+  editBar,
+  enterEdit,
+  exitEdit,
+  saveActive,
+  isEditing: () => !!editPane(),
+  english: { api: englishApi, settings: englishSettings, bar: selectionBar, assist: noteAssist },
 }
 
 /* ------------------------------------------------------------------ */
@@ -239,6 +411,14 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault()
     exitNotes()
     return
+  }
+
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+    if (editMode) {
+      e.preventDefault()
+      saveActive()
+      return
+    }
   }
 
   if (typing) return
@@ -431,3 +611,93 @@ workspace.addEventListener('drop', async (e) => {
 // Never let a stray drop navigate the page away from the viewer.
 window.addEventListener('dragover', (e) => e.preventDefault())
 window.addEventListener('drop', (e) => e.preventDefault())
+
+/* ------------------------------------------------------------------ */
+/* english settings                                                    */
+/* ------------------------------------------------------------------ */
+
+const enEnabled = document.getElementById('en-enabled')
+const enKey = document.getElementById('en-key')
+const enSave = document.getElementById('en-save')
+const enTest = document.getElementById('en-test')
+const enStatus = document.getElementById('en-status')
+
+function setEnStatus(text, bad = false) {
+  if (!enStatus) return
+  enStatus.textContent = text
+  enStatus.classList.toggle('bad', !!bad)
+}
+
+function describeHealth(health) {
+  if (health.mock) {
+    setEnStatus('模拟模式：不调用模型，只演示界面')
+    return
+  }
+  if (!health.configured) {
+    setEnStatus('未配置：粘贴密钥后点保存', true)
+    return
+  }
+  const used = health.totals ? health.totals.totalTokens : 0
+  const source = health.keySource === 'env' ? '环境变量' : health.keyTail || '—'
+  setEnStatus(`${health.model} · ${source} · 已用 ${used} token`)
+}
+
+async function refreshEnglishStatus() {
+  try {
+    describeHealth(await englishApi.health())
+  } catch (error) {
+    setEnStatus(error.message || '本地服务未响应', true)
+  }
+}
+
+if (enEnabled) {
+  enEnabled.checked = englishSettings.enabled
+  enEnabled.addEventListener('change', () => {
+    englishSettings.setEnabled(enEnabled.checked)
+    if (!enEnabled.checked) selectionBar.hide()
+    for (const card of notes.listEl.querySelectorAll('.note-card')) {
+      const item = notes.items.find((note) => note.id === card.dataset.id)
+      if (item) noteAssist.enhance(card, item)
+    }
+  })
+}
+
+if (enSave) {
+  enSave.addEventListener('click', async () => {
+    const value = enKey.value.trim()
+    if (!value) {
+      setEnStatus('先粘贴密钥', true)
+      return
+    }
+    enSave.disabled = true
+    setEnStatus('保存中…')
+    try {
+      await englishApi.saveConfig({ apiKey: value })
+      enKey.value = ''
+      await refreshEnglishStatus()
+    } catch (error) {
+      setEnStatus(error.message || '保存失败', true)
+    } finally {
+      enSave.disabled = false
+    }
+  })
+}
+
+if (enTest) {
+  enTest.addEventListener('click', async () => {
+    enTest.disabled = true
+    setEnStatus('测试中…')
+    try {
+      const result = await englishApi.test()
+      setEnStatus(
+        result.mock ? '模拟模式可用' : `连接正常 · ${result.latencyMs}ms · ${result.model}`,
+      )
+    } catch (error) {
+      setEnStatus(error.message || '连接失败', true)
+    } finally {
+      enTest.disabled = false
+    }
+  })
+}
+
+refreshEnglishStatus()

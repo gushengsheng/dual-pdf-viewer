@@ -3,13 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Left/right two fully independent PDF readers in one window.",
+  "description": "Left/right two fully independent PDF readers, with Markdown/TXT reading, notes, and an editable source mode.",
   "scripts": {
     "postinstall": "node scripts/copy-pdfjs-assets.mjs",
     "dev": "vite --port 5178 --strictPort",
     "build": "vite build",
     "preview": "vite preview --port 5179 --strictPort",
     "smoke": "node test/smoke.mjs",
+    "test:english": "node test/english.mjs",
+    "test:english-ui": "node test/english-ui.mjs",
+    "test:edit-ui": "node test/edit-ui.mjs",
     "local": "npm run build && node local/start.cjs",
     "local:serve": "node local/start.cjs"
   },

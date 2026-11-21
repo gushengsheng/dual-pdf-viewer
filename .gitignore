@@ -3,6 +3,7 @@ dist/
 test/out/
 public/pdfjs/
 notes/
+english.config.json
 .chrome-print/
 .chrome-smoke/
 .tmp/
